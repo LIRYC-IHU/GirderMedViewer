@@ -41,9 +41,8 @@ class MyTrameApp:
         self.state.user = None
         self.state.file_loading_busy = False
         self.state.quad_view = True
-        self.state.selected = [] # FIXME: explain the role of this variable
-        self.state.displayed = [] # FIXME: explain the role of this variable
-        self.state.detailed = [] # FIXME: explain the role of this variable
+        self.state.displayed = [] # Items loaded and visible in the viewer
+        self.state.detailed = [] # Items for which detailed information is displayed
         self.state.last_clicked = 0
         self.state.action_keys = [{"for": []}]
 
@@ -86,9 +85,13 @@ class MyTrameApp:
     def reset_resolution(self):
         self.state.resolution = 6
 
-    @change("resolution")
-    def on_resolution_change(self, resolution, **kwargs):
-        print(f">>> ENGINE(a): Slider updating resolution to {resolution}")
+    @change("user")
+    def set_user(self, user, **kwargs):
+        self.state.first_name = user.get("firstName", None) if user else None
+        self.state.last_name = user.get("lastName", None) if user else None
+        self.state.display_authentication = user is None
+        self.state.main_drawer = user is not None
+
 
     def _build_ui(self, *args, **kwargs):
         with SinglePageWithDrawerLayout(

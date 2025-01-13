@@ -42,9 +42,10 @@ girder_client = GirderClient(apiUrl=state.api_url)
 
 class GirderFileSelector(gwc.GirderFileManager):
     def __init__(self, quad_view, **kwargs):
+        state.selected_in_location = []
         super().__init__(
             v_if=("user",),
-            v_model=("selected",),
+            v_model=("selected_in_location",),
             location=("location",),
             update_location=(self.update_location, "[$event]"),
             rowclick=(
@@ -58,6 +59,10 @@ class GirderFileSelector(gwc.GirderFileManager):
         global file_selector
         file_selector = self
 
+        state.change("location", "displayed")(self.on_location_changed)
+        state.change("api_url")(self.set_api_url)
+        state.change("user")(self.set_user)
+
     def toggle_item(self, item):
         if item.get('_modelType') != 'item':
             return
@@ -66,7 +71,7 @@ class GirderFileSelector(gwc.GirderFileManager):
         if clicked_time - state.last_clicked < 1:
             return
         state.last_clicked = clicked_time
-        is_selected = item in state.selected
+        is_selected = item in state.displayed
         logger.debug(f"Toggle item {item} selected={is_selected}")
         if is_selected:
             self.unselect_volume(item)
@@ -82,27 +87,17 @@ class GirderFileSelector(gwc.GirderFileManager):
 
     def unselect_volume(self, item):
         state.displayed = [i for i in state.displayed if i != item]
-        state.selected = [i for i in state.selected if i != item]
-        state.detailed = [i for i in state.detailed if i != item]
-        if len(state.detailed) == 0:
-            # Make location the detailed item by default
-            state.detailed = (
-                [state.location] if state.location and
-                state.location.get("_id", "") else []
-            )
         self.quad_view.remove_data(item["_id"])
 
-    def unselect_volumes(self):
-        while len(state.selected):
-            self.unselect_volume(state.selected[0])
+    def unselect_items(self):
+        while len(state.displayed) > 0:
+            self.unselect_item(state.displayed[0])
 
     def select_volume(self, item):
         # only 1 volume at a time for now
         self.unselect_volumes()
 
         state.displayed = state.displayed + [item]
-        state.selected = state.selected + [item]
-        state.detailed = [item]
 
         self.create_load_task(item)
 
@@ -148,46 +143,29 @@ class GirderFileSelector(gwc.GirderFileManager):
             
             self.quad_view.load_files(file_list[0], item["_id"])
 
-    @state.change("location")
-    def on_location_changed(location, **kwargs):
-        logger.debug(f"Location changed to {location}")
-        if location:
-            location_id = location.get("_id", "")
-            if location_id:
-                if state.displayed:
-                    state.selected = [
-                        item for item in state.displayed
-                        if item["folderId"] == location_id
-                    ]
-                state.detailed = state.selected if state.selected else [location]
-            else:
-                state.detailed = []
-
-    @state.change("api_url")
-    def set_api_url(api_url, **kwargs):
-        # FIXME make girder_client a member variable
-        global girder_client
+    def set_api_url(self, api_url, **kwargs):
         logger.debug(f"Setting api_url to {api_url}")
-        girder_client = GirderClient(apiUrl=api_url)
+        self.file_downloader.girder_client = GirderClient(apiUrl=api_url)
 
-    @state.change("user")
-    def set_user(user, **kwargs):
+    def set_token(self, token):
+        self.file_downloader.girder_client.setToken(token)
+
+    def on_location_changed(self, **kwargs):
+        logger.debug(f"Location/Displayed changed to {state.location}/{state.displayed}")
+        location_id = state.location.get("_id", "") if state.location else ""
+        state.selected_in_location = [item for item in state.displayed
+                                      if item["folderId"] == location_id]
+        state.detailed = state.selected_in_location if state.selected_in_location else [state.location]
+
+    def set_user(self, user, **kwargs):
         logger.debug(f"Setting user to {user}")
         if user:
-            state.first_name = user.get("firstName", "")
-            state.last_name = user.get("lastName", "")
             state.location = state.default_location or user
-            state.display_authentication = False
-            state.main_drawer = True
-            girder_client.setToken(state.token)
+            self.set_token(state.token)
         else:
-            file_selector.unselect_volumes()
-            state.first_name = None
-            state.last_name = None
+            self.unselect_items()
             state.location = None
-            if girder_client:
-                girder_client.token = None
-            state.main_drawer = False
+            self.set_token(None)
 
 class Button():
     def __init__(
