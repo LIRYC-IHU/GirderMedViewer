@@ -17,8 +17,11 @@ from typing import Callable, Optional
 from .vtk_utils import (
     create_rendering_pipeline,
     load_file,
-    render_slice,
-    render_3D,
+    load_mesh,
+    render_mesh_in_3D,
+    render_mesh_in_slice,
+    render_volume_in_3D,
+    render_volume_in_slice,
     set_oblique_visibility
 )
 
@@ -74,9 +77,9 @@ class GirderFileSelector(gwc.GirderFileManager):
         is_selected = item in state.displayed
         logger.debug(f"Toggle item {item} selected={is_selected}")
         if is_selected:
-            self.unselect_volume(item)
+            self.unselect_item(item)
         else:
-            self.select_volume(item)
+            self.select_item(item)
     
     def update_location(self, new_location):
         """
@@ -85,7 +88,7 @@ class GirderFileSelector(gwc.GirderFileManager):
         logger.debug(f"Updating location to {new_location}")
         state.location = new_location
 
-    def unselect_volume(self, item):
+    def unselect_item(self, item):
         state.displayed = [i for i in state.displayed if i != item]
         self.quad_view.remove_data(item["_id"])
 
@@ -93,9 +96,12 @@ class GirderFileSelector(gwc.GirderFileManager):
         while len(state.displayed) > 0:
             self.unselect_item(state.displayed[0])
 
-    def select_volume(self, item):
+    def select_item(self, item):
+        assert item.get('_modelType') == 'item', "Only item can be selected"
+        is_mesh = item.get('name', '').endswith('.stl')
         # only 1 volume at a time for now
-        self.unselect_volumes()
+        if not is_mesh:
+            self.unselect_items()
 
         state.displayed = state.displayed + [item]
 
@@ -140,8 +146,12 @@ class GirderFileSelector(gwc.GirderFileManager):
                     "You are trying to load more than one file. \
                     If so, please load a compressed archive."
                 )
-            
-            self.quad_view.load_files(file_list[0], item["_id"])
+            file_path = file_list[0]
+            try:
+                self.quad_view.load_files(file_path, item["_id"])
+            except Exception as e:
+                logger.error(f"Error loading file {file_path}: {e}")
+                self.unselect_item(item)
 
     def set_api_url(self, api_url, **kwargs):
         logger.debug(f"Setting api_url to {api_url}")
@@ -348,7 +358,7 @@ class SliceView(VtkView):
         self._build_ui()
     
     def add_volume(self, image_data, data_id=None):
-        reslice_image_viewer = render_slice(
+        reslice_image_viewer = render_volume_in_slice(
             data_id,
             image_data,
             self.renderer,
@@ -356,6 +366,15 @@ class SliceView(VtkView):
             obliques=state.display_obliques
         )
         self.register_data(data_id, reslice_image_viewer)
+        self.update()
+
+    def add_mesh(self, poly_data, data_id=None):
+        actor = render_mesh_in_slice(
+            data_id,
+            poly_data,
+            self.renderer
+        )
+        self.register_data(data_id, actor)
         self.update()
 
     # FIXME: react to display_obliques change
@@ -378,11 +397,19 @@ class ThreeDView(VtkView):
         self._build_ui()
     
     def add_volume(self, image_data, data_id=None):
-        volume = render_3D(
+        volume = render_volume_in_3D(
             image_data,
             self.renderer
         )
         self.register_data(data_id, volume)
+        self.update()
+    
+    def add_mesh(self, poly_data, data_id=None):
+        actor = render_mesh_in_3D(
+            poly_data,
+            self.renderer
+        )
+        self.register_data(data_id, actor)
         self.update()
 
     def _build_ui(self):
@@ -410,10 +437,14 @@ class QuadView(VContainer):
 
     def load_files(self, file_path, data_id=None):
         logger.debug(f"Loading file {file_path}")
-        image_data = load_file(file_path)
-
-        for view in self.views:
-            view.add_volume(image_data, data_id)
+        if file_path.endswith(".stl"):
+            poly_data = load_mesh(file_path)
+            for view in self.views:
+                view.add_mesh(poly_data, data_id)
+        else:
+            image_data = load_file(file_path)
+            for view in self.views:
+                view.add_volume(image_data, data_id)
 
         ctrl.view_update()
 
