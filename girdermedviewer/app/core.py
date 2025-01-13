@@ -81,6 +81,9 @@ class MyTrameApp:
             config.get("girder", "default_location", fallback="{}"))
         self.state.app_name = config.get("ui", "name", fallback="Girder Medical Viewer")
 
+        self.state.temp_dir = config.get("download", "directory", fallback=None)
+        self.state.cache_mode = config.get("download", "cache_mode", fallback=None)
+
     @controller.set("reset_resolution")
     def reset_resolution(self):
         self.state.resolution = 6

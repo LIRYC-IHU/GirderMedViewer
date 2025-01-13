@@ -1,19 +1,18 @@
 import asyncio
 from math import floor
 import logging
-import os
 import sys
 from time import time
 from collections import defaultdict
 
 
-from tempfile import TemporaryDirectory
 from trame_server.utils.asynchronous import create_task
 from trame.app import get_server
 from trame.widgets import gwc, html, vtk
 from trame.widgets.vuetify2 import (VContainer, VRow, VCol, VTooltip, Template,
                                     VBtn, VCard, VIcon)
 from typing import Callable, Optional
+from .girder_utils import FileDownloader, CacheMode
 from .vtk_utils import (
     create_rendering_pipeline,
     load_file,
@@ -34,14 +33,7 @@ logger.setLevel(logging.DEBUG)
 server = get_server(client_type="vue2")
 state, ctrl = server.state, server.controller
 
-
-# -----------------------------------------------------------------------------
-# Viewer layout
-# -----------------------------------------------------------------------------
-
 file_selector = None
-
-girder_client = GirderClient(apiUrl=state.api_url)
 
 class GirderFileSelector(gwc.GirderFileManager):
     def __init__(self, quad_view, **kwargs):
@@ -58,6 +50,9 @@ class GirderFileSelector(gwc.GirderFileManager):
             **kwargs
         )
         self.quad_view = quad_view
+        girder_client = GirderClient(apiUrl=state.api_url)
+        cache_mode = CacheMode(state.cache_mode) if state.cache_mode else CacheMode.No
+        self.file_downloader = FileDownloader(girder_client, state.temp_dir, cache_mode)
         # FIXME do not use global variable
         global file_selector
         file_selector = self
@@ -124,34 +119,22 @@ class GirderFileSelector(gwc.GirderFileManager):
 
     def load_item(self, item):
         logger.debug(f"Loading files {item}")
-        with TemporaryDirectory() as tmp_dir:
-            file_list = []
+        try:
             logger.debug(f"Listing files")
-            for file in girder_client.listFile(item["_id"]):
-                file_path = os.path.join(tmp_dir, file["name"])
-                logger.debug(f"Downloading {file_path}")
-                girder_client.downloadFile(
-                    file["_id"],
-                    file_path
-                )
-                logger.debug(f"Downloaded {file_path}")
-                file_list.append(file_path)
-
-            if len(file_list) == 0:
+            files = list(self.file_downloader.get_item_files(item))
+            logger.debug(f"Files {files}")
+            if len(files) != 1:
                 raise Exception(
                     "No file to load. Please check the selected item."
-                )
-            if len(file_list) > 1:
-                raise Exception(
+                    if (not files) else \
                     "You are trying to load more than one file. \
                     If so, please load a compressed archive."
                 )
-            file_path = file_list[0]
-            try:
+            with self.file_downloader.download_file(files[0]) as file_path:
                 self.quad_view.load_files(file_path, item["_id"])
-            except Exception as e:
-                logger.error(f"Error loading file {file_path}: {e}")
-                self.unselect_item(item)
+        except Exception as e:
+            logger.error(f"Error loading file {item['_id']}: {e}")
+            self.unselect_item(item)
 
     def set_api_url(self, api_url, **kwargs):
         logger.debug(f"Setting api_url to {api_url}")
