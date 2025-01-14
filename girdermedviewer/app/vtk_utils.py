@@ -1,7 +1,6 @@
 import logging
 import sys
 from collections import defaultdict
-
 from vtkmodules.all import (
     vtkCommand,
     vtkRenderer,
@@ -35,6 +34,7 @@ logger.setLevel(logging.DEBUG)
 viewers = defaultdict(list)
 # key = data_id, value=ResliceImageViewerCallback
 viewer_callbacks = {}
+
 
 # Callback class used to refresh all views.
 class ResliceImageViewerCallback(object):
@@ -236,6 +236,7 @@ def render_mesh_in_slice(data_id, poly_data, renderer):
 
     return actor
 
+
 def render_volume_in_3D(image_data, renderer):
     volume_mapper = vtkSmartVolumeMapper()
     volume_mapper.SetInputData(image_data)
@@ -266,6 +267,7 @@ def render_volume_in_3D(image_data, renderer):
     renderer.ResetCameraScreenSpace(0.8)
 
     return volume
+
 
 def render_mesh_in_3D(poly_data, renderer):
     mapper = vtkPolyDataMapper()

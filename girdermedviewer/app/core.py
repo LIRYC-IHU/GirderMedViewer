@@ -2,23 +2,17 @@ import ast
 import os
 from urllib.parse import urljoin
 from configparser import ConfigParser
-
 from trame.app import get_server
 from trame.decorators import TrameApp, change, controller
 from trame.widgets import gwc, html
 from trame.ui.vuetify import SinglePageWithDrawerLayout
-
 from trame.widgets.vuetify2 import (VContainer, VRow, VCol, VBtn, VCard, VIcon)
-
 from .components import QuadView, ToolsStrip, GirderFileSelector
-
-from trame.widgets import vuetify, vtk
-#from trame.widgets import vuetify3, vtk
-# from trame.ui.vuetify import SinglePageLayout
 
 # ---------------------------------------------------------
 # Engine class
 # ---------------------------------------------------------
+
 
 @TrameApp()
 class MyTrameApp:
@@ -35,20 +29,19 @@ class MyTrameApp:
         # Set state variable
         self.state.trame__title = "GirderMedViewer"
         self.state.resolution = 6
-        self.state.display_authentication= False
+        self.state.display_authentication = False
         self.state.display_obliques = True
         self.state.main_drawer = False
         self.state.user = None
         self.state.file_loading_busy = False
         self.state.quad_view = True
-        self.state.displayed = [] # Items loaded and visible in the viewer
-        self.state.detailed = [] # Items for which detailed information is displayed
+        self.state.displayed = []  # Items loaded and visible in the viewer
+        self.state.detailed = []  # Items for which detailed information is displayed
         self.state.last_clicked = 0
         self.state.action_keys = [{"for": []}]
 
         self.quad_view = None
         self.ui = self._build_ui()
-
 
     @property
     def state(self):
@@ -95,13 +88,12 @@ class MyTrameApp:
         self.state.display_authentication = user is None
         self.state.main_drawer = user is not None
 
-
     def _build_ui(self, *args, **kwargs):
         with SinglePageWithDrawerLayout(
-                self.server,
-                show_drawer=False,
-                width="25%"
-            ) as layout:
+            self.server,
+            show_drawer=False,
+            width="25%"
+        ) as layout:
             self.provider.register_layout(layout)
             layout.title.set_text(self.state.app_name)
             layout.toolbar.height = 75
@@ -167,6 +159,6 @@ class MyTrameApp:
                     v_if=("detailed.length > 0",),
                     action_keys=("action_keys",),
                     value=("detailed",)
-               )
+                )
 
             return layout

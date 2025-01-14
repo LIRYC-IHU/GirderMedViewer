@@ -5,13 +5,11 @@ import sys
 from time import time
 
 from collections import defaultdict
-
-
 from trame_server.utils.asynchronous import create_task
 from trame.app import get_server
 from trame.widgets import gwc, html, vtk
-from trame.widgets.vuetify2 import (VContainer, VRow, VCol, VTooltip, Template,
-                                    VBtn, VCard, VIcon)
+from trame.widgets.vuetify2 import (VContainer, VRow, VCol, VTooltip,
+                                    Template, VBtn, VIcon)
 from typing import Callable, Optional
 from .girder_utils import FileDownloader, CacheMode
 from .utils import debounce
@@ -30,7 +28,6 @@ from .vtk_utils import (
     set_oblique_visibility,
     set_reslice_center
 )
-
 from girder_client import GirderClient
 
 logging.basicConfig(stream=sys.stdout)
@@ -131,13 +128,13 @@ class GirderFileSelector(gwc.GirderFileManager):
     def load_item(self, item):
         logger.debug(f"Loading files {item}")
         try:
-            logger.debug(f"Listing files")
+            logger.debug("Listing files")
             files = list(self.file_downloader.get_item_files(item))
             logger.debug(f"Files {files}")
             if len(files) != 1:
                 raise Exception(
                     "No file to load. Please check the selected item."
-                    if (not files) else \
+                    if (not files) else
                     "You are trying to load more than one file. \
                     If so, please load a compressed archive."
                 )
@@ -206,7 +203,7 @@ class Button():
 
 
 class ToolsStrip(html.Div):
-    def __init__(self, quad_view = None, **kwargs):
+    def __init__(self, quad_view=None, **kwargs):
         super().__init__(
             classes="bg-grey-darken-4 d-flex flex-column align-center",
             **kwargs,
@@ -248,6 +245,7 @@ class ToolsStrip(html.Div):
 
     def set_quad_view(self, quad_view):
         self.quad_view = quad_view
+
 
 class ViewGutter(html.Div):
     def __init__(self, view=0):
@@ -422,7 +420,7 @@ class ThreeDView(VtkView):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._build_ui()
-    
+
     def add_volume(self, image_data, data_id=None):
         volume = render_volume_in_3D(
             image_data,
@@ -430,7 +428,7 @@ class ThreeDView(VtkView):
         )
         self.register_data(data_id, volume)
         self.update()
-    
+
     def add_mesh(self, poly_data, data_id=None):
         actor = render_mesh_in_3D(
             poly_data,
