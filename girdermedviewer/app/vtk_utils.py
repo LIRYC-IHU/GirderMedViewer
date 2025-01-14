@@ -14,12 +14,14 @@ from vtkmodules.all import (
 from vtk import (
     vtkActor,
     vtkColorTransferFunction,
+    vtkImageReslice,
     vtkNIFTIImageReader,
     vtkPiecewiseFunction,
     vtkPolyDataMapper,
     vtkResliceCursorLineRepresentation,
     vtkSmartVolumeMapper,
     vtkSTLReader,
+    vtkTransform,
     vtkVolume,
     vtkVolumeProperty,
 )
@@ -307,9 +309,23 @@ def load_file(file_path):
         reader = vtkNIFTIImageReader()
         reader.SetFileName(file_path)
         reader.Update()
-        return reader.GetOutput()
 
-    # TODO Handle dicom, vti, mesh
+        if reader.GetSFormMatrix() is None:
+            return reader.GetOutput()
+
+        transform = vtkTransform()
+        transform.SetMatrix(reader.GetSFormMatrix())
+        transform.Inverse()
+
+        reslice = vtkImageReslice()
+        reslice.SetInputConnection(reader.GetOutputPort())
+        reslice.SetResliceTransform(transform)
+        reslice.SetInterpolationModeToLinear()
+        reslice.AutoCropOutputOn()
+        reslice.TransformInputSamplingOff()
+        reslice.Update()
+
+        return reslice.GetOutput()
 
     raise Exception("File format is not handled for {}".format(file_path))
 
