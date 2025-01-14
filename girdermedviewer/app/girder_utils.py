@@ -18,8 +18,6 @@ class CacheMode(Enum):
 class FileDownloader:
     def __init__(self, girder_client, temp_dir=None, cache_mode=CacheMode.No):
         """
-        Warning, if temp_dir is not provided, the temporary directory will be
-        deleted when the object is deleted even if cache_mode is set to CacheMode.Session
         :example:
         ```
         girder_client = GirderClient(apiUrl="http://localhost:8080/api/v1")
@@ -33,6 +31,8 @@ class FileDownloader:
         if not self.temp_dir_path:
             self.temporary_directory = TemporaryDirectory()
             self.temp_dir_path = self.temporary_directory.name
+            if cache_mode == CacheMode.Permanent:
+                raise Exception("A directory must be provided if cache mode is Permanent")
         self.girder_client = girder_client
         self.cache = cache_mode
 
