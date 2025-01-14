@@ -12,13 +12,16 @@ from vtkmodules.all import (
     vtkWidgetEvent
 )
 from vtk import (
+    vtkActor,
     vtkColorTransferFunction,
     vtkNIFTIImageReader,
-    vtkSmartVolumeMapper,
-    vtkVolumeProperty,
     vtkPiecewiseFunction,
-    vtkVolume,
+    vtkPolyDataMapper,
     vtkResliceCursorLineRepresentation,
+    vtkSmartVolumeMapper,
+    vtkSTLReader,
+    vtkVolume,
+    vtkVolumeProperty,
 )
 
 logging.basicConfig(stream=sys.stdout)
@@ -73,7 +76,7 @@ def set_oblique_visibility(reslice_image_viewer, visible):
             .SetOpacity(1.0 if visible else 0.0)
     reslice_cursor_widget.SetProcessEvents(visible)
 
-def render_slice(data_id, image_data, renderer, axis=2, obliques=True):
+def render_volume_in_slice(data_id, image_data, renderer, axis=2, obliques=True):
     render_window = renderer.GetRenderWindow()
     interactor = render_window.GetInteractor()
 
@@ -171,10 +174,24 @@ def render_slice(data_id, image_data, renderer, axis=2, obliques=True):
     return reslice_image_viewer
 
 
-def render_3D(image_data, renderer):
+def render_mesh_in_slice(data_id, poly_data, renderer):
+    mapper = vtkPolyDataMapper()
+    mapper.SetInputData(poly_data)
+
+    actor = vtkActor()
+    actor.SetMapper(mapper)
+    actor.GetProperty().SetColor(1, 0, 0)
+
+    renderer.AddActor(actor)
+    renderer.ResetCameraScreenSpace(0.8)
+
+    return actor
+
+def render_volume_in_3D(image_data, renderer):
     volume_mapper = vtkSmartVolumeMapper()
     volume_mapper.SetInputData(image_data)
 
+    # FIXME: does not work for all dataset
     volume_property = vtkVolumeProperty()
     volume_property.ShadeOn()
     volume_property.SetInterpolationTypeToLinear()
@@ -197,11 +214,22 @@ def render_3D(image_data, renderer):
     volume.SetProperty(volume_property)
 
     renderer.AddVolume(volume)
-
     renderer.ResetCameraScreenSpace(0.8)
 
     return volume
 
+def render_mesh_in_3D(poly_data, renderer):
+    mapper = vtkPolyDataMapper()
+    mapper.SetInputData(poly_data)
+
+    actor = vtkActor()
+    actor.SetMapper(mapper)
+    actor.GetProperty().SetColor(1, 0, 0)
+
+    renderer.AddActor(actor)
+    renderer.ResetCameraScreenSpace(0.8)
+
+    return actor
 
 def create_rendering_pipeline(n_views):
     renderers, render_windows, interactors = [], [], []
@@ -226,7 +254,8 @@ def create_rendering_pipeline(n_views):
 
 
 def load_file(file_path):
-    logger.debug(f"Loading file {file_path}")
+    """Read a file and return a vtkImageData object"""
+    logger.debug(f"Loading volume {file_path}")
     if file_path.endswith((".nii", ".nii.gz")):
         reader = vtkNIFTIImageReader()
         reader.SetFileName(file_path)
@@ -234,5 +263,17 @@ def load_file(file_path):
         return reader.GetOutput()
 
     # TODO Handle dicom, vti, mesh
+
+    raise Exception("File format is not handled for {}".format(file_path))
+
+
+def load_mesh(file_path):
+    """Read a file and return a vtkPolyData object"""
+    logger.debug(f"Loading mesh {file_path}")
+    if file_path.endswith(".stl"):
+        reader = vtkSTLReader()
+        reader.SetFileName(file_path)
+        reader.Update()
+        return reader.GetOutput()
 
     raise Exception("File format is not handled for {}".format(file_path))
