@@ -76,6 +76,53 @@ def set_oblique_visibility(reslice_image_viewer, visible):
             .SetOpacity(1.0 if visible else 0.0)
     reslice_cursor_widget.SetProcessEvents(visible)
 
+
+def get_reslice_cursor(reslice_object):
+    """
+    Return the point where the 3 planes intersect.
+    :rtype tuple[float, float, float]
+    """
+    if isinstance(reslice_object, vtkResliceImageViewer):
+        reslice_object = reslice_object.GetResliceCursorWidget()
+    if reslice_object.IsA('vtkResliceCursorWidget'):
+        reslice_object = reslice_object.GetResliceCursorRepresentation()
+    if reslice_object.IsA('vtkResliceCursorRepresentation'):
+        reslice_object = reslice_object.GetResliceCursor()
+    assert reslice_object.IsA('vtkResliceCursor')
+    return reslice_object
+
+
+def get_reslice_center(reslice_object):
+    """
+    Return the point where the 3 planes intersect.
+    :rtype tuple[float, float, float]
+    """
+    return get_reslice_cursor(reslice_object).center
+
+
+def set_reslice_center(reslice_object, new_center):
+    get_reslice_cursor(reslice_object).SetCenter(new_center)
+
+
+def get_reslice_normals(reslice_object):
+    """
+    Return the 3 plane normals as a tuple of tuples.
+    :rtype tuple[tuple[float, float, float],
+                 tuple[float, float, float],
+                 tuple[float, float, float]]
+    """
+    reslice_cursor = get_reslice_cursor(reslice_object)
+    return (
+        reslice_cursor.x_axis,
+        reslice_cursor.y_axis,
+        reslice_cursor.z_axis,
+    )
+
+
+def get_reslice_normal(reslice_image_viewer, axis):
+    return get_reslice_normals(reslice_image_viewer)[axis]
+
+
 def render_volume_in_slice(data_id, image_data, renderer, axis=2, obliques=True):
     render_window = renderer.GetRenderWindow()
     interactor = render_window.GetInteractor()
