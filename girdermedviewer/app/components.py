@@ -25,6 +25,8 @@ from .vtk_utils import (
     render_mesh_in_slice,
     render_volume_in_3D,
     render_volume_in_slice,
+    reset_slice,
+    reset_3D,
     set_oblique_visibility,
     set_reslice_center
 )
@@ -212,30 +214,37 @@ class ToolsStrip(html.Div):
         self.quad_view = quad_view
 
         with self:
-            # FIXME use a unique button
-            with html.Div(v_if=("display_obliques",),):
-                Button(
-                    tooltip="Hide obliques",
-                    icon="mdi-eye-remove-outline",
-                    click=lambda: self.quad_view.set_obliques_visibility(False),
-                    disabled=("displayed.length === 0",)
-                )
+            Button(
+                tooltip=("{{ display_obliques ? 'Hide obliques' : 'Show Obliques' }}",),
+                icon=("{{ display_obliques ? 'mdi-eye-remove-outline' : 'mdi-eye-outline' }}",),
+                click=self.toggle_obliques_visibility,
+                disabled=("displayed.length === 0 || file_loading_busy",)
+            )
 
-            with html.Div(v_else=True):
-                Button(
-                    tooltip="Show obliques",
-                    icon="mdi-eye-outline",
-                    click=lambda: self.quad_view.set_obliques_visibility(True),
-                    disabled=("displayed.length === 0",),
-                )
+            Button(
+                tooltip="Reset Views",
+                icon="mdi-camera-flip-outline",
+                click=self.reset_views,
+                disabled=("displayed.length === 0 || file_loading_busy",)
+            )
 
             Button(
                 tooltip="Clear View",
                 icon="mdi-reload",
-                click=lambda: self.quad_view.remove_volume(),
+                click=self.clear_views,
                 loading=("file_loading_busy",),
-                disabled=("displayed.length === 0",)
+                disabled=("displayed.length === 0 || file_loading_busy",)
             )
+
+    def toggle_obliques_visibility(self):
+        state.display_obliques = not state.display_obliques
+        self.quad_view.set_obliques_visibility(state.display_obliques)
+
+    def clear_views(self):
+        self.quad_view.remove_all_data()
+
+    def reset_views(self):
+        self.quad_view.reset_views()
 
     def set_quad_view(self, quad_view):
         self.quad_view = quad_view
@@ -259,13 +268,6 @@ class ViewGutter(html.Div):
                 classes="gutter-content d-flex flex-column fill-height pa-2"
             ):
                 Button(
-                    tooltip="Reset View",
-                    icon="mdi-camera-flip-outline",
-                    icon_color="white",
-                    click=self.reset_view,
-                )
-
-                Button(
                     v_if=("quad_view",),
                     tooltip="Extend to fullscreen",
                     icon="mdi-fullscreen",
@@ -280,30 +282,6 @@ class ViewGutter(html.Div):
                     icon_color="white",
                     click=self.exit_fullscreen,
                 )
-
-    def reset_view(self):
-        reslice_image = self.view.render_window.reslice_image
-        if reslice_image:
-            bounds = self.view.renderer.GetViewProps() \
-                .GetLastProp() \
-                .GetBounds()
-            center = (
-                (bounds[0] + bounds[1]) / 2.0,
-                (bounds[2] + bounds[3]) / 2.0,
-                (bounds[4] + bounds[5]) / 2.0
-            )
-            # Replace slice cursor at the volume center
-            reslice_image.GetResliceCursor().SetCenter(center)
-            reslice_image.GetResliceCursorWidget().ResetResliceCursor()
-        else:
-            self.view.renderer.GetActiveCamera().SetFocalPoint((0, 0, 0))
-            self.view.renderer.GetActiveCamera().SetPosition((0, 0, 1))
-
-        self.view.renderer.ResetCameraScreenSpace(0.8)
-        self.view.render_window.Render()
-        self.view.interactors.Render()
-
-        ctrl.view_update()
 
     def extend_fullscreen(self):
         state.quad_view = False
@@ -342,6 +320,22 @@ class VtkView(vtk.VtkRemoteView):
         if not no_render:
             self.update()
 
+    def unregister_all_data(self):
+        for _, item in self.data.items():
+            for data in item:
+                if data.IsA("vtkVolume"):
+                    self.renderer.RemoveVolume(data)
+                elif data.IsA("vtkActor"):
+                    self.renderer.RemoveActor(data)
+                elif data.IsA("vtkImageViewer2"):
+                    data.SetupInteractor(None)
+                    # FIXME: check for leak
+                    # data.SetRenderer(None)
+                    # data.SetRenderWindow(None)
+        self.data.clear()
+        state.displayed = []
+        self.update()
+
 
 class SliceView(VtkView):
     """ Display volume as a 2D slice along a given axis """
@@ -379,7 +373,12 @@ class SliceView(VtkView):
         self.register_data(data_id, actor)
         self.update()
 
-    # FIXME: react to display_obliques change
+    def reset_view(self):
+        for reslice_image_viewers in self.data.values():
+            for reslice_image_viewer in reslice_image_viewers:
+                reset_slice(reslice_image_viewer, self.renderer)
+        self.update()
+
     def set_obliques_visibility(self, visible):
         for reslice_image_viewer in self.get_reslice_image_viewers():
             set_oblique_visibility(reslice_image_viewer, visible)
@@ -440,6 +439,10 @@ class ThreeDView(VtkView):
         self.register_data(data_id, actor)
         self.update()
 
+    def reset_view(self):
+        reset_3D(self.renderer)
+        self.update()
+
     def _build_ui(self):
         with self:
             ViewGutter(self)
@@ -463,6 +466,21 @@ class QuadView(VContainer):
             view.unregister_data(data_id)
         ctrl.view_update()
 
+    def remove_all_data(self, data_id=None):
+        for view in self.views:
+            view.unregister_all_data()
+        ctrl.view_update()
+
+    def set_obliques_visibility(self, visibility):
+        for view in self.twod_views:
+            view.set_obliques_visibility(visibility)
+        ctrl.view_update()
+
+    def reset_views(self):
+        for view in self.views:
+            view.reset_view()
+        ctrl.view_update()
+
     def load_files(self, file_path, data_id=None):
         logger.debug(f"Loading file {file_path}")
         if file_path.endswith(".stl"):
@@ -474,12 +492,6 @@ class QuadView(VContainer):
             for view in self.views:
                 view.add_volume(image_data, data_id)
 
-        ctrl.view_update()
-
-    def set_obliques_visibility(self, visible):
-        state.display_obliques = True
-        for view in self.twod_views:
-            view.set_obliques_visibility(visible)
         ctrl.view_update()
 
     def _build_ui(self):

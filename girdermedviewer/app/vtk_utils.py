@@ -280,6 +280,28 @@ def render_mesh_in_3D(poly_data, renderer):
 
     return actor
 
+
+def reset_slice(reslice_image_viewer, renderer):
+    bounds = renderer.GetViewProps() \
+        .GetLastProp() \
+        .GetBounds()
+    center = (
+        (bounds[0] + bounds[1]) / 2.0,
+        (bounds[2] + bounds[3]) / 2.0,
+        (bounds[4] + bounds[5]) / 2.0
+    )
+    # Replace slice cursor at the volume center
+    reslice_image_viewer.GetResliceCursor().SetCenter(center)
+    reslice_image_viewer.GetResliceCursorWidget().ResetResliceCursor()
+    renderer.ResetCameraScreenSpace(0.8)
+
+
+def reset_3D(renderer):
+    renderer.GetActiveCamera().SetFocalPoint((0, 0, 0))
+    renderer.GetActiveCamera().SetPosition((0, 0, 1))
+    renderer.ResetCameraScreenSpace(0.8)
+
+
 def create_rendering_pipeline(n_views):
     renderers, render_windows, interactors = [], [], []
     for _ in range(n_views):
