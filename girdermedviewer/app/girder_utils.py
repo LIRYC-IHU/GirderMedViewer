@@ -64,7 +64,7 @@ class FileDownloader:
 
     def clear_cache(self, file=None):
         if file is not None:
-            file_path = os.path.join(self.temp_dir, file['_id'], file["name"])
+            file_path = os.path.join(self.temp_dir_path, file['_id'], file["name"])
             os.remove(file_path)
         else:
-            self.temp_dir.cleanup()
+            self.temp_dir_path.cleanup()
