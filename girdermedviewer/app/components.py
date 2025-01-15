@@ -241,7 +241,7 @@ class ToolsStrip(html.Div):
         self.quad_view = quad_view
 
 class ViewGutter(html.Div):
-    def __init__(self, view=0):
+    def __init__(self, view, **kwargs):
         super().__init__(
             classes="gutter",
             style=(
@@ -250,7 +250,9 @@ class ViewGutter(html.Div):
                 "left: 0;"
                 "background-color: transparent;"
                 "height: 100%;"
-            )
+            ),
+            v_if=("displayed.length>0 && !file_loading_busy",),
+            **kwargs
         )
         self.view = view
         with self:
@@ -266,19 +268,10 @@ class ViewGutter(html.Div):
                 )
 
                 Button(
-                    v_if=("quad_view",),
-                    tooltip="Extend to fullscreen",
-                    icon="mdi-fullscreen",
+                    tooltip=("{{ active_view === 'quad_view' ? 'Extend to fullscreen' : 'Exit fullscreen' }}",),
+                    icon=("{{ active_view === 'quad_view' ? 'mdi-fullscreen' : 'mdi-fullscreen-exit' }}",),
                     icon_color="white",
-                    click=self.extend_fullscreen,
-                )
-
-                Button(
-                    v_else=True,
-                    tooltip="Exit fullscreen",
-                    icon="mdi-fullscreen-exit",
-                    icon_color="white",
-                    click=self.exit_fullscreen,
+                    click=self.toggle_active_view,
                 )
 
     def reset_view(self):
@@ -305,11 +298,8 @@ class ViewGutter(html.Div):
 
         ctrl.view_update()
 
-    def extend_fullscreen(self):
-        state.quad_view = False
-
-    def exit_fullscreen(self):
-        state.quad_view = True
+    def toggle_active_view(self):
+        state.active_view = self.view.name if state.active_view == 'quad_view' else 'quad_view'
 
 
 class VtkView(vtk.VtkRemoteView):
@@ -345,9 +335,10 @@ class VtkView(vtk.VtkRemoteView):
 
 class SliceView(VtkView):
     """ Display volume as a 2D slice along a given axis """
-    def __init__(self, axis, **kwargs):
+    def __init__(self, axis, name, **kwargs):
         super().__init__(**kwargs)
         self.axis = axis
+        self.name = name
         self._build_ui()
         state.change("position")(self.set_position)
 
@@ -420,8 +411,9 @@ class SliceView(VtkView):
 
 
 class ThreeDView(VtkView):
-    def __init__(self, **kwargs):
+    def __init__(self, name, **kwargs):
         super().__init__(**kwargs)
+        self.name = name
         self._build_ui()
     
     def add_volume(self, image_data, data_id=None):
@@ -451,6 +443,7 @@ class QuadView(VContainer):
     def __init__(self, **kwargs):
         super().__init__(
             classes="fill-height pa-0",
+            fluid=True,
             **kwargs
         )
         self.twod_views = []
@@ -484,22 +477,34 @@ class QuadView(VContainer):
 
     def _build_ui(self):
         with self:
-            with VRow(style="height:50%", no_gutters=True):
-                with VCol(cols=6):
-                    with SliceView(0) as sag_view:
+            with VRow(
+                style="height:100%", no_gutters=True
+            ):
+                with VCol(
+                    v_if=("active_view === 'quad_view' || active_view === 'sag_view'",),
+                    cols=("active_view === 'quad_view' ? 6 : 12",)
+                ):
+                    with SliceView(0, "sag_view") as sag_view:
                         self.twod_views.append(sag_view)
                         self.views.append(sag_view)
-                with VCol(cols=6):
-                    with ThreeDView() as threed_view:
+                with VCol(
+                    v_if=("active_view === 'quad_view' || active_view === 'threed_view'",),
+                    cols=("active_view === 'quad_view' ? 6 : 12",)
+                ):
+                    with ThreeDView("threed_view") as threed_view:
                         self.threed_views.append(threed_view)
                         self.views.append(threed_view)
-
-            with VRow(style="height:50%", no_gutters=True):
-                with VCol(cols=6):
-                    with SliceView(1) as cor_view:
+                with VCol(
+                    v_if=("active_view === 'quad_view' || active_view === 'cor_view'",),
+                    cols=("active_view === 'quad_view' ? 6 : 12",)
+                ):
+                    with SliceView(1, "cor_view") as cor_view:
                         self.twod_views.append(cor_view)
                         self.views.append(cor_view)
-                with VCol(cols=6):
-                    with SliceView(2) as ax_view:
+                with VCol(
+                    v_if=("active_view === 'quad_view' || active_view === 'ax_view'",),
+                    cols=("active_view === 'quad_view' ? 6 : 12",)
+                ):
+                    with SliceView(2, "ax_view") as ax_view:
                         self.twod_views.append(ax_view)
                         self.views.append(ax_view)

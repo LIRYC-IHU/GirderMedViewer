@@ -40,13 +40,11 @@ class MyTrameApp:
         self.state.main_drawer = False
         self.state.user = None
         self.state.file_loading_busy = False
-        self.state.quad_view = True
+        self.state.active_view = "quad_view"
         self.state.displayed = [] # Items loaded and visible in the viewer
         self.state.detailed = [] # Items for which detailed information is displayed
         self.state.last_clicked = 0
         self.state.action_keys = [{"for": []}]
-
-        self.quad_view = None
         self.ui = self._build_ui()
 
 
@@ -156,7 +154,7 @@ class MyTrameApp:
                     classes="fill-height d-flex flex-row flex-grow-1"
                 ):
                     ts = ToolsStrip()
-                    qd = QuadView(v_if=("quad_view",))
+                    qd = QuadView()
                     self.quad_view = qd
                     ts.set_quad_view(qd)
 
