@@ -14,12 +14,14 @@ from vtkmodules.all import (
 from vtk import (
     vtkActor,
     vtkColorTransferFunction,
+    vtkImageReslice,
     vtkNIFTIImageReader,
     vtkPiecewiseFunction,
     vtkPolyDataMapper,
     vtkResliceCursorLineRepresentation,
     vtkSmartVolumeMapper,
     vtkSTLReader,
+    vtkTransform,
     vtkVolume,
     vtkVolumeProperty,
 )
@@ -75,6 +77,53 @@ def set_oblique_visibility(reslice_image_viewer, visible):
         reslice_cursor_actor.GetCenterlineProperty(axis) \
             .SetOpacity(1.0 if visible else 0.0)
     reslice_cursor_widget.SetProcessEvents(visible)
+
+
+def get_reslice_cursor(reslice_object):
+    """
+    Return the point where the 3 planes intersect.
+    :rtype tuple[float, float, float]
+    """
+    if isinstance(reslice_object, vtkResliceImageViewer):
+        reslice_object = reslice_object.GetResliceCursorWidget()
+    if reslice_object.IsA('vtkResliceCursorWidget'):
+        reslice_object = reslice_object.GetResliceCursorRepresentation()
+    if reslice_object.IsA('vtkResliceCursorRepresentation'):
+        reslice_object = reslice_object.GetResliceCursor()
+    assert reslice_object.IsA('vtkResliceCursor')
+    return reslice_object
+
+
+def get_reslice_center(reslice_object):
+    """
+    Return the point where the 3 planes intersect.
+    :rtype tuple[float, float, float]
+    """
+    return get_reslice_cursor(reslice_object).center
+
+
+def set_reslice_center(reslice_object, new_center):
+    get_reslice_cursor(reslice_object).SetCenter(new_center)
+
+
+def get_reslice_normals(reslice_object):
+    """
+    Return the 3 plane normals as a tuple of tuples.
+    :rtype tuple[tuple[float, float, float],
+                 tuple[float, float, float],
+                 tuple[float, float, float]]
+    """
+    reslice_cursor = get_reslice_cursor(reslice_object)
+    return (
+        reslice_cursor.x_axis,
+        reslice_cursor.y_axis,
+        reslice_cursor.z_axis,
+    )
+
+
+def get_reslice_normal(reslice_image_viewer, axis):
+    return get_reslice_normals(reslice_image_viewer)[axis]
+
 
 def render_volume_in_slice(data_id, image_data, renderer, axis=2, obliques=True):
     render_window = renderer.GetRenderWindow()
@@ -260,9 +309,23 @@ def load_file(file_path):
         reader = vtkNIFTIImageReader()
         reader.SetFileName(file_path)
         reader.Update()
-        return reader.GetOutput()
 
-    # TODO Handle dicom, vti, mesh
+        if reader.GetSFormMatrix() is None:
+            return reader.GetOutput()
+
+        transform = vtkTransform()
+        transform.SetMatrix(reader.GetSFormMatrix())
+        transform.Inverse()
+
+        reslice = vtkImageReslice()
+        reslice.SetInputConnection(reader.GetOutputPort())
+        reslice.SetResliceTransform(transform)
+        reslice.SetInterpolationModeToLinear()
+        reslice.AutoCropOutputOn()
+        reslice.TransformInputSamplingOff()
+        reslice.Update()
+
+        return reslice.GetOutput()
 
     raise Exception("File format is not handled for {}".format(file_path))
 

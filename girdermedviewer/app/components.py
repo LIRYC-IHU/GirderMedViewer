@@ -3,6 +3,7 @@ from math import floor
 import logging
 import sys
 from time import time
+
 from collections import defaultdict
 
 
@@ -13,15 +14,19 @@ from trame.widgets.vuetify2 import (VContainer, VRow, VCol, VTooltip, Template,
                                     VBtn, VCard, VIcon)
 from typing import Callable, Optional
 from .girder_utils import FileDownloader, CacheMode
+from .utils import debounce
 from .vtk_utils import (
     create_rendering_pipeline,
+    get_reslice_center,
+    get_reslice_normals,
     load_file,
     load_mesh,
     render_mesh_in_3D,
     render_mesh_in_slice,
     render_volume_in_3D,
     render_volume_in_slice,
-    set_oblique_visibility
+    set_oblique_visibility,
+    set_reslice_center
 )
 
 from girder_client import GirderClient
@@ -33,7 +38,11 @@ logger.setLevel(logging.DEBUG)
 server = get_server(client_type="vue2")
 state, ctrl = server.state, server.controller
 
-file_selector = None
+
+@debounce(0.3)
+def debounced_flush():
+    state.flush()
+
 
 class GirderFileSelector(gwc.GirderFileManager):
     def __init__(self, quad_view, **kwargs):
@@ -75,7 +84,7 @@ class GirderFileSelector(gwc.GirderFileManager):
             self.unselect_item(item)
         else:
             self.select_item(item)
-    
+
     def update_location(self, new_location):
         """
         Called each time the user browse through the GirderFileManager.
@@ -159,6 +168,7 @@ class GirderFileSelector(gwc.GirderFileManager):
             self.unselect_items()
             state.location = None
             self.set_token(None)
+
 
 class Button():
     def __init__(
@@ -339,7 +349,8 @@ class SliceView(VtkView):
         super().__init__(**kwargs)
         self.axis = axis
         self._build_ui()
-    
+        state.change("position")(self.set_position)
+
     def add_volume(self, image_data, data_id=None):
         reslice_image_viewer = render_volume_in_slice(
             data_id,
@@ -349,6 +360,14 @@ class SliceView(VtkView):
             obliques=state.display_obliques
         )
         self.register_data(data_id, reslice_image_viewer)
+
+        reslice_cursor_widget = reslice_image_viewer.GetResliceCursorWidget()
+        reslice_image_viewer.AddObserver(
+            'InteractionEvent', self.on_slice_scroll)
+        reslice_cursor_widget.AddObserver(
+            'InteractionEvent', self.on_reslice_axes_interaction)
+        reslice_cursor_widget.AddObserver(
+            'EndInteractionEvent', self.on_reslice_axes_end_interaction)
         self.update()
 
     def add_mesh(self, poly_data, data_id=None):
@@ -362,10 +381,36 @@ class SliceView(VtkView):
 
     # FIXME: react to display_obliques change
     def set_obliques_visibility(self, visible):
-        for reslice_image_viewers in self.data.values():
-            for reslice_image_viewer in reslice_image_viewers:
-                set_oblique_visibility(reslice_image_viewer, visible)
+        for reslice_image_viewer in self.get_reslice_image_viewers():
+            set_oblique_visibility(reslice_image_viewer, visible)
         self.update()
+
+    def on_slice_scroll(self, reslice_image_viewer, event):
+        """
+        Triggered when scrolling the current image.
+        Because it is called within a co-routine, position is not flushed right away.
+        """
+        state.position = get_reslice_center(reslice_image_viewer)
+        debounced_flush()
+
+    def on_reslice_axes_interaction(self, reslice_image_widget, event):
+        """
+        Triggered when interacting with oblique lines.
+        Because it is called within a co-routine, position is not flushed right away.
+        """
+        state.position = get_reslice_center(reslice_image_widget)
+        state.normals = get_reslice_normals(reslice_image_widget)
+
+    def on_reslice_axes_end_interaction(self, reslice_image_widget, event):
+        state.flush()
+
+    def set_position(self, position, **kwargs):
+        logger.debug(f"set_position: {position}")
+        for reslice_image_viewer in self.get_reslice_image_viewers():
+            set_reslice_center(reslice_image_viewer, position)
+
+    def get_reslice_image_viewers(self):
+        return [obj for objs in self.data.values() for obj in objs if obj.IsA('vtkResliceImageViewer')]
 
     def _build_ui(self):
         with self:
@@ -458,4 +503,3 @@ class QuadView(VContainer):
                     with SliceView(2) as ax_view:
                         self.twod_views.append(ax_view)
                         self.views.append(ax_view)
-
