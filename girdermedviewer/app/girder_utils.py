@@ -3,12 +3,11 @@ import sys
 from contextlib import contextmanager
 from enum import Enum
 from tempfile import TemporaryDirectory
-import logging
 
+import logging
 logging.basicConfig(stream=sys.stdout)
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
-
 
 class CacheMode(Enum):
     No = "No"

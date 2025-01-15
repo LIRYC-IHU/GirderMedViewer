@@ -12,6 +12,7 @@ from vtkmodules.all import (
 )
 from vtk import (
     vtkActor,
+    vtkBoundingBox,
     vtkColorTransferFunction,
     vtkImageReslice,
     vtkNIFTIImageReader,
@@ -104,6 +105,13 @@ def get_reslice_center(reslice_object):
 
 def set_reslice_center(reslice_object, new_center):
     get_reslice_cursor(reslice_object).SetCenter(new_center)
+
+
+def reset_reslice(reslice_image_viewer):
+    center = reslice_image_viewer.input.center
+    reslice_image_viewer.GetResliceCursor().SetCenter(center)
+    reslice_image_viewer.GetResliceCursorWidget().ResetResliceCursor()
+    reslice_image_viewer.GetRenderer().ResetCameraScreenSpace(0.8)
 
 
 def get_reslice_normals(reslice_object):
@@ -237,6 +245,18 @@ def render_mesh_in_slice(data_id, poly_data, renderer):
     return actor
 
 
+def reset_3D(renderer):
+    bounds = renderer.ComputeVisiblePropBounds()
+    center = [0, 0, 0]
+    vtkBoundingBox(bounds).GetCenter(center)
+    renderer.GetActiveCamera().SetFocalPoint(center)
+    renderer.GetActiveCamera().SetPosition(
+        (bounds[1], bounds[2], center[2])
+    )
+    renderer.GetActiveCamera().SetViewUp(0, 0, 1)
+    renderer.ResetCameraScreenSpace(0.8)
+
+
 def render_volume_in_3D(image_data, renderer):
     volume_mapper = vtkSmartVolumeMapper()
     volume_mapper.SetInputData(image_data)
@@ -264,7 +284,7 @@ def render_volume_in_3D(image_data, renderer):
     volume.SetProperty(volume_property)
 
     renderer.AddVolume(volume)
-    renderer.ResetCameraScreenSpace(0.8)
+    reset_3D(renderer)
 
     return volume
 
@@ -281,27 +301,6 @@ def render_mesh_in_3D(poly_data, renderer):
     renderer.ResetCameraScreenSpace(0.8)
 
     return actor
-
-
-def reset_slice(reslice_image_viewer, renderer):
-    bounds = renderer.GetViewProps() \
-        .GetLastProp() \
-        .GetBounds()
-    center = (
-        (bounds[0] + bounds[1]) / 2.0,
-        (bounds[2] + bounds[3]) / 2.0,
-        (bounds[4] + bounds[5]) / 2.0
-    )
-    # Replace slice cursor at the volume center
-    reslice_image_viewer.GetResliceCursor().SetCenter(center)
-    reslice_image_viewer.GetResliceCursorWidget().ResetResliceCursor()
-    renderer.ResetCameraScreenSpace(0.8)
-
-
-def reset_3D(renderer):
-    renderer.GetActiveCamera().SetFocalPoint((0, 0, 0))
-    renderer.GetActiveCamera().SetPosition((0, 0, 1))
-    renderer.ResetCameraScreenSpace(0.8)
 
 
 def create_rendering_pipeline(n_views):

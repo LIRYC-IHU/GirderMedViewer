@@ -9,7 +9,7 @@ from trame_server.utils.asynchronous import create_task
 from trame.app import get_server
 from trame.widgets import gwc, html, vtk
 from trame.widgets.vuetify2 import (VContainer, VRow, VCol, VTooltip,
-                                    Template, VBtn, VIcon)
+                                    Template, VBtn, VIcon, VCheckbox)
 from typing import Callable, Optional
 from .girder_utils import FileDownloader, CacheMode
 from .utils import debounce
@@ -23,7 +23,7 @@ from .vtk_utils import (
     render_mesh_in_slice,
     render_volume_in_3D,
     render_volume_in_slice,
-    reset_slice,
+    reset_reslice,
     reset_3D,
     set_oblique_visibility,
     set_reslice_center
@@ -41,6 +41,48 @@ state, ctrl = server.state, server.controller
 @debounce(0.3)
 def debounced_flush():
     state.flush()
+
+
+class GirderDrawer(VContainer):
+    def __init__(self, quad_view, **kwargs):
+        super().__init__(
+            classes="fill-height pa-0",
+            **kwargs
+        )
+        self.quad_view = quad_view
+        self._build_ui()
+
+    def _build_ui(self):
+        with self:
+            with VRow(
+                style="height:100%",
+                align_content="start",
+                justify="center",
+                no_gutters=True
+            ):
+                with VCol(cols=12):
+                    GirderFileSelector(self.quad_view)
+
+                with VCol(cols=12):
+                    # TODO To Replace with ItemList
+                    gwc.GirderDataDetails(
+                        v_if=("detailed.length > 0",),
+                        action_keys=("action_keys",),
+                        value=("detailed",)
+                    )
+                with VCol(v_if=("displayed.length > 0",), cols="auto"):
+                    Button(
+                        tooltip="Clear View",
+                        icon="mdi-close-box",
+                        click=self.clear_views,
+                        loading=("file_loading_busy",),
+                        size=60,
+                        disabled=("file_loading_busy",),
+                    )
+
+    def clear_views(self):
+        self.quad_view.clear()
+        state.displayed = []
 
 
 class GirderFileSelector(gwc.GirderFileManager):
@@ -203,48 +245,27 @@ class Button():
 
 
 class ToolsStrip(html.Div):
-    def __init__(self, quad_view=None, **kwargs):
+    def __init__(self, **kwargs):
         super().__init__(
             classes="bg-grey-darken-4 d-flex flex-column align-center",
             **kwargs,
         )
-        self.quad_view = quad_view
 
         with self:
-            Button(
-                tooltip=("{{ display_obliques ? 'Hide obliques' : 'Show Obliques' }}",),
-                icon=("{{ display_obliques ? 'mdi-eye-remove-outline' : 'mdi-eye-outline' }}",),
-                click=self.toggle_obliques_visibility,
+            VCheckbox(
+                v_model=("obliques_visibility",),
+                off_icon='mdi-eye-outline',
+                on_icon='mdi-eye-remove-outline',
+                color="black",
                 disabled=("displayed.length === 0 || file_loading_busy",)
             )
 
             Button(
                 tooltip="Reset Views",
                 icon="mdi-camera-flip-outline",
-                click=self.reset_views,
+                click=ctrl.reset,
                 disabled=("displayed.length === 0 || file_loading_busy",)
             )
-
-            Button(
-                tooltip="Clear View",
-                icon="mdi-reload",
-                click=self.clear_views,
-                loading=("file_loading_busy",),
-                disabled=("displayed.length === 0 || file_loading_busy",)
-            )
-
-    def toggle_obliques_visibility(self):
-        state.display_obliques = not state.display_obliques
-        self.quad_view.set_obliques_visibility(state.display_obliques)
-
-    def clear_views(self):
-        self.quad_view.remove_all_data()
-
-    def reset_views(self):
-        self.quad_view.reset_views()
-
-    def set_quad_view(self, quad_view):
-        self.quad_view = quad_view
 
 
 class ViewGutter(html.Div):
@@ -297,6 +318,7 @@ class VtkView(vtk.VtkRemoteView):
         self.render_window = render_windows[0]
         self.interactor = interactors[0]
         self.data = defaultdict(list)
+        ctrl.view_update.add(self.update)
 
     def register_data(self, data_id, data):
         # Associate data (typically an actor) to data_id so that it can be
@@ -318,21 +340,12 @@ class VtkView(vtk.VtkRemoteView):
         if not no_render:
             self.update()
 
-    def unregister_all_data(self):
-        for _, item in self.data.items():
-            for data in item:
-                if data.IsA("vtkVolume"):
-                    self.renderer.RemoveVolume(data)
-                elif data.IsA("vtkActor"):
-                    self.renderer.RemoveActor(data)
-                elif data.IsA("vtkImageViewer2"):
-                    data.SetupInteractor(None)
-                    # FIXME: check for leak
-                    # data.SetRenderer(None)
-                    # data.SetRenderWindow(None)
-        self.data.clear()
-        state.displayed = []
-        self.update()
+    def unregister_all_data(self, no_render=False):
+        data_ids = list(self.data.keys())
+        for data_id in data_ids:
+            self.unregister_data(data_id, True)
+        if not no_render:
+            self.update()
 
 
 class SliceView(VtkView):
@@ -341,6 +354,7 @@ class SliceView(VtkView):
         super().__init__(**kwargs)
         self.axis = axis
         self._build_ui()
+
         state.change("position")(self.set_position)
 
     def add_volume(self, image_data, data_id=None):
@@ -349,7 +363,7 @@ class SliceView(VtkView):
             image_data,
             self.renderer,
             self.axis,
-            obliques=state.display_obliques
+            obliques=state.obliques_visibility
         )
         self.register_data(data_id, reslice_image_viewer)
 
@@ -371,10 +385,9 @@ class SliceView(VtkView):
         self.register_data(data_id, actor)
         self.update()
 
-    def reset_view(self):
-        for reslice_image_viewers in self.data.values():
-            for reslice_image_viewer in reslice_image_viewers:
-                reset_slice(reslice_image_viewer, self.renderer)
+    def reset(self):
+        for reslice_image_viewer in self.get_reslice_image_viewers():
+            reset_reslice(reslice_image_viewer)
         self.update()
 
     def set_obliques_visibility(self, visible):
@@ -412,8 +425,6 @@ class SliceView(VtkView):
     def _build_ui(self):
         with self:
             ViewGutter(self)
-            ctrl.view_update.add(self.update)
-            ctrl.view_reset_camera.add(self.reset_camera)
 
 
 class ThreeDView(VtkView):
@@ -437,15 +448,13 @@ class ThreeDView(VtkView):
         self.register_data(data_id, actor)
         self.update()
 
-    def reset_view(self):
+    def reset(self):
         reset_3D(self.renderer)
         self.update()
 
     def _build_ui(self):
         with self:
             ViewGutter(self)
-            ctrl.view_update.add(self.update)
-            ctrl.view_reset_camera.add(self.reset_camera)
 
 
 class QuadView(VContainer):
@@ -459,24 +468,27 @@ class QuadView(VContainer):
         self.views = []
         self._build_ui()
 
+        ctrl.reset = self.reset
+        state.change("obliques_visibility")(self.set_obliques_visibility)
+
     def remove_data(self, data_id=None):
         for view in self.views:
             view.unregister_data(data_id)
         ctrl.view_update()
 
-    def remove_all_data(self, data_id=None):
+    def clear(self):
         for view in self.views:
             view.unregister_all_data()
         ctrl.view_update()
 
-    def set_obliques_visibility(self, visibility):
+    def set_obliques_visibility(self, obliques_visibility, **kwargs):
         for view in self.twod_views:
-            view.set_obliques_visibility(visibility)
+            view.set_obliques_visibility(obliques_visibility)
         ctrl.view_update()
 
-    def reset_views(self):
+    def reset(self):
         for view in self.views:
-            view.reset_view()
+            view.reset()
         ctrl.view_update()
 
     def load_files(self, file_path, data_id=None):

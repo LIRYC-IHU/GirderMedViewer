@@ -7,7 +7,7 @@ from trame.decorators import TrameApp, change, controller
 from trame.widgets import gwc, html
 from trame.ui.vuetify import SinglePageWithDrawerLayout
 from trame.widgets.vuetify2 import (VContainer, VRow, VCol, VBtn, VCard, VIcon)
-from .components import QuadView, ToolsStrip, GirderFileSelector
+from .components import QuadView, ToolsStrip, GirderDrawer
 
 # ---------------------------------------------------------
 # Engine class
@@ -30,7 +30,7 @@ class MyTrameApp:
         self.state.trame__title = "GirderMedViewer"
         self.state.resolution = 6
         self.state.display_authentication = False
-        self.state.display_obliques = True
+        self.state.obliques_visibility = True
         self.state.main_drawer = False
         self.state.user = None
         self.state.file_loading_busy = False
@@ -92,7 +92,7 @@ class MyTrameApp:
         with SinglePageWithDrawerLayout(
             self.server,
             show_drawer=False,
-            width="25%"
+            width="400px"
         ) as layout:
             self.provider.register_layout(layout)
             layout.title.set_text(self.state.app_name)
@@ -147,18 +147,11 @@ class MyTrameApp:
                     fluid=True,
                     classes="fill-height d-flex flex-row flex-grow-1"
                 ):
-                    ts = ToolsStrip()
+                    ToolsStrip()
                     qd = QuadView(v_if=("quad_view",))
                     self.quad_view = qd
-                    ts.set_quad_view(qd)
 
             with layout.drawer:
-                GirderFileSelector(self.quad_view)
-
-                gwc.GirderDataDetails(
-                    v_if=("detailed.length > 0",),
-                    action_keys=("action_keys",),
-                    value=("detailed",)
-                )
+                GirderDrawer(self.quad_view)
 
             return layout
