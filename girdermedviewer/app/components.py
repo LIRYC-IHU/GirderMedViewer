@@ -454,7 +454,6 @@ class QuadView(VContainer):
         self.threed_views = []
         self.views = []
         state.fullscreen = None
-        state.change("fullscreen")(self.on_fullscreen_changed)
         self._build_ui()
 
     def remove_data(self, data_id=None):
@@ -481,35 +480,32 @@ class QuadView(VContainer):
             view.set_obliques_visibility(visible)
         ctrl.view_update()
 
-    def compute_style(self):
-        def view_style(view_id):
-            hide_view = state.fullscreen is not None and state.fullscreen != view_id
-            return f"#{view_id} {{{' display: none' if hide_view else ''}}}"
-        return (
-            f".view_grid {{{ ' grid-template-columns: 1fr 1fr' if state.fullscreen is None else ''}}}" +
-            "\n".join([view_style(view.id) for view in self.views])
-        )
-
-    def on_fullscreen_changed(self, **kwargs):
-        ctrl.update_style(self.compute_style())
-
     def _build_ui(self):
         with self:
-            style = client.Style(self.compute_style())
-            ctrl.update_style = style.update
             with html.Div(
-                style=("display: grid; gap: 10px; width: 100%; height: 100%; position: relative;"),
-                classes="view_grid",
+                style=("""{
+                       display: 'grid',
+                       'grid-template-columns': fullscreen == null ? '1fr 1fr' : 'none',
+                       gap: '2px',
+                       width: '100%',
+                       height: '100%',
+                       position: 'relative'
+                       }""",),
             ):
-                with SliceView(Orientation.SAGITTAL, id="sag_view") as sag_view:
+                with SliceView(Orientation.SAGITTAL,
+                               id="sag_view",
+                               v_if="fullscreen == null || fullscreen == 'sag_view'") as sag_view:
                     self.twod_views.append(sag_view)
                     self.views.append(sag_view)
-                with ThreeDView(id="threed_view") as threed_view:
+                with ThreeDView(id="threed_view",
+                                v_if="fullscreen == null || fullscreen == 'threed_view'") as threed_view:
                     self.threed_views.append(threed_view)
                     self.views.append(threed_view)
-                with SliceView(Orientation.CORONAL, id="cor_view") as cor_view:
+                with SliceView(Orientation.CORONAL, id="cor_view",
+                               v_if="fullscreen == null || fullscreen == 'cor_view'") as cor_view:
                     self.twod_views.append(cor_view)
                     self.views.append(cor_view)
-                with SliceView(Orientation.AXIAL, id="ax_view") as ax_view:
+                with SliceView(Orientation.AXIAL, id="ax_view",
+                               v_if="fullscreen == null || fullscreen == 'ax_view'") as ax_view:
                     self.twod_views.append(ax_view)
                     self.views.append(ax_view)
