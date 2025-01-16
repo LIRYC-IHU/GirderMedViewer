@@ -2,14 +2,14 @@ import asyncio
 from math import floor
 import logging
 import sys
-from time import time
-
 from collections import defaultdict
+from enum import Enum
+from time import time
 
 
 from trame_server.utils.asynchronous import create_task
 from trame.app import get_server
-from trame.widgets import gwc, html, vtk
+from trame.widgets import gwc, html, vtk, client
 from trame.widgets.vuetify2 import (VContainer, VRow, VCol, VTooltip, Template,
                                     VBtn, VCard, VIcon)
 from typing import Callable, Optional
@@ -254,6 +254,7 @@ class ViewGutter(html.Div):
             v_if=("displayed.length>0 && !file_loading_busy",),
             **kwargs
         )
+        assert view.id is not None
         self.view = view
         with self:
             with html.Div(
@@ -266,12 +267,11 @@ class ViewGutter(html.Div):
                     icon_color="white",
                     click=self.reset_view,
                 )
-
                 Button(
-                    tooltip=("{{ active_view === 'quad_view' ? 'Extend to fullscreen' : 'Exit fullscreen' }}",),
-                    icon=("{{ active_view === 'quad_view' ? 'mdi-fullscreen' : 'mdi-fullscreen-exit' }}",),
+                    tooltip=("{{ fullscreen==null ? 'Extend to fullscreen' : 'Exit fullscreen' }}",),
+                    icon=("{{ fullscreen==null ? 'mdi-fullscreen' : 'mdi-fullscreen-exit' }}",),
                     icon_color="white",
-                    click=self.toggle_active_view,
+                    click=self.toggle_fullscreen,
                 )
 
     def reset_view(self):
@@ -298,8 +298,8 @@ class ViewGutter(html.Div):
 
         ctrl.view_update()
 
-    def toggle_active_view(self):
-        state.active_view = self.view.name if state.active_view == 'quad_view' else 'quad_view'
+    def toggle_fullscreen(self):
+        state.fullscreen = None if state.fullscreen else self.view.id
 
 
 class VtkView(vtk.VtkRemoteView):
@@ -333,12 +333,17 @@ class VtkView(vtk.VtkRemoteView):
             self.update()
 
 
+class Orientation(Enum):
+    SAGITTAL = 0
+    CORONAL = 1
+    AXIAL = 2
+
+
 class SliceView(VtkView):
     """ Display volume as a 2D slice along a given axis """
-    def __init__(self, axis, name, **kwargs):
-        super().__init__(**kwargs)
-        self.axis = axis
-        self.name = name
+    def __init__(self, orientation, **kwargs):
+        super().__init__(classes=f"slice {orientation.name.lower()}", **kwargs)
+        self.orientation = orientation
         self._build_ui()
         state.change("position")(self.set_position)
 
@@ -347,7 +352,7 @@ class SliceView(VtkView):
             data_id,
             image_data,
             self.renderer,
-            self.axis,
+            self.orientation.value,
             obliques=state.display_obliques
         )
         self.register_data(data_id, reslice_image_viewer)
@@ -411,11 +416,10 @@ class SliceView(VtkView):
 
 
 class ThreeDView(VtkView):
-    def __init__(self, name, **kwargs):
-        super().__init__(**kwargs)
-        self.name = name
+    def __init__(self, **kwargs):
+        super().__init__(classes="threed", **kwargs)
         self._build_ui()
-    
+
     def add_volume(self, image_data, data_id=None):
         volume = render_volume_in_3D(
             image_data,
@@ -423,7 +427,7 @@ class ThreeDView(VtkView):
         )
         self.register_data(data_id, volume)
         self.update()
-    
+
     def add_mesh(self, poly_data, data_id=None):
         actor = render_mesh_in_3D(
             poly_data,
@@ -449,6 +453,8 @@ class QuadView(VContainer):
         self.twod_views = []
         self.threed_views = []
         self.views = []
+        state.fullscreen = None
+        state.change("fullscreen")(self.on_fullscreen_changed)
         self._build_ui()
 
     def remove_data(self, data_id=None):
@@ -475,36 +481,35 @@ class QuadView(VContainer):
             view.set_obliques_visibility(visible)
         ctrl.view_update()
 
+    def compute_style(self):
+        def view_style(view_id):
+            hide_view = state.fullscreen is not None and state.fullscreen != view_id
+            return f"#{view_id} {{{' display: none' if hide_view else ''}}}"
+        return (
+            f".view_grid {{{ ' grid-template-columns: 1fr 1fr' if state.fullscreen is None else ''}}}" +
+            "\n".join([view_style(view.id) for view in self.views])
+        )
+
+    def on_fullscreen_changed(self, **kwargs):
+        ctrl.update_style(self.compute_style())
+
     def _build_ui(self):
         with self:
-            with VRow(
-                style="height:100%", no_gutters=True
+            style = client.Style(self.compute_style())
+            ctrl.update_style = style.update
+            with html.Div(
+                style=("display: grid; gap: 10px; width: 100%; height: 100%; position: relative;"),
+                classes="view_grid",
             ):
-                with VCol(
-                    v_if=("active_view === 'quad_view' || active_view === 'sag_view'",),
-                    cols=("active_view === 'quad_view' ? 6 : 12",)
-                ):
-                    with SliceView(0, "sag_view") as sag_view:
-                        self.twod_views.append(sag_view)
-                        self.views.append(sag_view)
-                with VCol(
-                    v_if=("active_view === 'quad_view' || active_view === 'threed_view'",),
-                    cols=("active_view === 'quad_view' ? 6 : 12",)
-                ):
-                    with ThreeDView("threed_view") as threed_view:
-                        self.threed_views.append(threed_view)
-                        self.views.append(threed_view)
-                with VCol(
-                    v_if=("active_view === 'quad_view' || active_view === 'cor_view'",),
-                    cols=("active_view === 'quad_view' ? 6 : 12",)
-                ):
-                    with SliceView(1, "cor_view") as cor_view:
-                        self.twod_views.append(cor_view)
-                        self.views.append(cor_view)
-                with VCol(
-                    v_if=("active_view === 'quad_view' || active_view === 'ax_view'",),
-                    cols=("active_view === 'quad_view' ? 6 : 12",)
-                ):
-                    with SliceView(2, "ax_view") as ax_view:
-                        self.twod_views.append(ax_view)
-                        self.views.append(ax_view)
+                with SliceView(Orientation.SAGITTAL, id="sag_view") as sag_view:
+                    self.twod_views.append(sag_view)
+                    self.views.append(sag_view)
+                with ThreeDView(id="threed_view") as threed_view:
+                    self.threed_views.append(threed_view)
+                    self.views.append(threed_view)
+                with SliceView(Orientation.CORONAL, id="cor_view") as cor_view:
+                    self.twod_views.append(cor_view)
+                    self.views.append(cor_view)
+                with SliceView(Orientation.AXIAL, id="ax_view") as ax_view:
+                    self.twod_views.append(ax_view)
+                    self.views.append(ax_view)

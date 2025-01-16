@@ -40,7 +40,6 @@ class MyTrameApp:
         self.state.main_drawer = False
         self.state.user = None
         self.state.file_loading_busy = False
-        self.state.active_view = "quad_view"
         self.state.displayed = [] # Items loaded and visible in the viewer
         self.state.detailed = [] # Items for which detailed information is displayed
         self.state.last_clicked = 0
