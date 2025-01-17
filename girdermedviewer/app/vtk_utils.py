@@ -15,6 +15,7 @@ from vtk import (
     vtkColorTransferFunction,
     vtkCutter,
     vtkImageReslice,
+    vtkMatrix4x4,
     vtkNIFTIImageReader,
     vtkPiecewiseFunction,
     vtkPolyDataMapper,
@@ -22,6 +23,7 @@ from vtk import (
     vtkSmartVolumeMapper,
     vtkSTLReader,
     vtkTransform,
+    vtkTransformFilter,
     vtkVolume,
     vtkVolumeProperty,
 )
@@ -362,6 +364,20 @@ def load_mesh(file_path):
         reader = vtkSTLReader()
         reader.SetFileName(file_path)
         reader.Update()
-        return reader.GetOutput()
+
+        matrix = vtkMatrix4x4()
+        matrix.SetElement(0, 0, -1)
+        matrix.SetElement(1, 1, -1)
+
+        transform = vtkTransform()
+        transform.SetMatrix(matrix)
+        transform.Inverse()
+
+        transform_filter = vtkTransformFilter()
+        transform_filter.SetInputConnection(reader.GetOutputPort())
+        transform_filter.SetTransform(transform)
+        transform_filter.Update()
+
+        return transform_filter.GetOutput()
 
     raise Exception("File format is not handled for {}".format(file_path))
