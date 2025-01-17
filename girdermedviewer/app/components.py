@@ -354,7 +354,6 @@ class SliceView(VtkView):
 
     def add_volume(self, image_data, data_id=None):
         reslice_image_viewer = render_volume_in_slice(
-            data_id,
             image_data,
             self.renderer,
             self.axis,
@@ -373,8 +372,8 @@ class SliceView(VtkView):
 
     def add_mesh(self, poly_data, data_id=None):
         actor = render_mesh_in_slice(
-            data_id,
             poly_data,
+            self.axis,
             self.renderer
         )
         self.register_data(data_id, actor)
