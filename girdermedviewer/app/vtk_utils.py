@@ -317,26 +317,18 @@ def render_mesh_in_3D(poly_data, renderer):
     return actor
 
 
-def create_rendering_pipeline(n_views):
-    renderers, render_windows, interactors = [], [], []
-    for _ in range(n_views):
-        renderer = vtkRenderer()
-        render_window = vtkRenderWindow()
-        interactor = vtkRenderWindowInteractor()
+def create_rendering_pipeline():
+    renderer = vtkRenderer()
+    render_window = vtkRenderWindow()
+    interactor = vtkRenderWindowInteractor()
 
-        render_window.AddRenderer(renderer)
-        interactor.SetRenderWindow(render_window)
-        interactor.GetInteractorStyle().SetCurrentStyleToTrackballCamera()
+    render_window.AddRenderer(renderer)
+    interactor.SetRenderWindow(render_window)
+    interactor.GetInteractorStyle().SetCurrentStyleToTrackballCamera()
 
-        renderer.ResetCamera()
-        render_window.Render()
-        interactor.Render()
+    renderer.ResetCamera()
 
-        renderers.append(renderer)
-        render_windows.append(render_window)
-        interactors.append(interactor)
-
-    return renderers, render_windows, interactors
+    return renderer, render_window, interactor
 
 
 def load_volume(file_path):

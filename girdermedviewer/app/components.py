@@ -316,11 +316,11 @@ class ViewGutter(html.Div):
 class VtkView(vtk.VtkRemoteView):
     """ Base class for VTK views """
     def __init__(self, **kwargs):
-        renderers, render_windows, interactors = create_rendering_pipeline(1)
-        super().__init__(render_windows[0], **kwargs)
-        self.renderer = renderers[0]
-        self.render_window = render_windows[0]
-        self.interactor = interactors[0]
+        renderer, render_window, interactor = create_rendering_pipeline()
+        super().__init__(render_window, **kwargs)
+        self.renderer = renderer
+        self.render_window = render_window
+        self.interactor = interactor
         self.data = defaultdict(list)
 
     def register_data(self, data_id, data):
@@ -368,6 +368,7 @@ class SliceView(VtkView):
             'InteractionEvent', self.on_reslice_axes_interaction)
         reslice_cursor_widget.AddObserver(
             'EndInteractionEvent', self.on_reslice_axes_end_interaction)
+
         self.update()
 
     def add_mesh(self, poly_data, data_id=None):
@@ -423,7 +424,7 @@ class ThreeDView(VtkView):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._build_ui()
-    
+
     def add_volume(self, image_data, data_id=None):
         volume = render_volume_in_3D(
             image_data,
@@ -453,10 +454,16 @@ class QuadView(VContainer):
             classes="fill-height pa-0",
             **kwargs
         )
-        self.twod_views = []
-        self.threed_views = []
         self.views = []
         self._build_ui()
+
+    @property
+    def twod_views(self):
+        return [view for view in self.views if isinstance(view, SliceView)]
+
+    @property
+    def threed_views(self):
+        return [view for view in self.views if isinstance(view, ThreeDView)]
 
     def remove_data(self, data_id=None):
         for view in self.views:
@@ -487,19 +494,15 @@ class QuadView(VContainer):
             with VRow(style="height:50%", no_gutters=True):
                 with VCol(cols=6):
                     with SliceView(0) as sag_view:
-                        self.twod_views.append(sag_view)
                         self.views.append(sag_view)
                 with VCol(cols=6):
                     with ThreeDView() as threed_view:
-                        self.threed_views.append(threed_view)
                         self.views.append(threed_view)
 
             with VRow(style="height:50%", no_gutters=True):
                 with VCol(cols=6):
                     with SliceView(1) as cor_view:
-                        self.twod_views.append(cor_view)
                         self.views.append(cor_view)
                 with VCol(cols=6):
                     with SliceView(2) as ax_view:
-                        self.twod_views.append(ax_view)
                         self.views.append(ax_view)
