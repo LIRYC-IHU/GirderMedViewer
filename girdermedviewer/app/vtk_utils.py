@@ -85,7 +85,7 @@ def get_reslice_cursor(reslice_object):
     :rtype tuple[float, float, float]
     """
     if isinstance(reslice_object, vtkResliceImageViewer):
-        reslice_object = reslice_object.GetResliceCursorWidget()
+        reslice_object = reslice_object.GetResliceCursor()
     if reslice_object.IsA('vtkResliceCursorWidget'):
         reslice_object = reslice_object.GetResliceCursorRepresentation()
     if reslice_object.IsA('vtkResliceCursorRepresentation'):
