@@ -139,11 +139,21 @@ def get_reslice_image_viewer(axis=-1):
             axis = 2
     if axis in viewers:
         return viewers[axis]
+
     reslice_image_viewer = vtkResliceImageViewer()
-    viewers[axis] = reslice_image_viewer
-    global viewer_callback
-    if viewer_callback is None:
+    # is it the firstly created image viewer ?
+    if len(viewers) == 0:
+        reslice_cursor = get_reslice_cursor(reslice_image_viewer)
+        reslice_cursor.GetPlane(0).SetNormal(-1, 0, 0)
+        reslice_cursor.SetXViewUp(0, 0, -1)
+        reslice_cursor.GetPlane(1).SetNormal(0, 1, 0)
+        reslice_cursor.SetYViewUp(0, 0, -1)
+        reslice_cursor.GetPlane(2).SetNormal(0, 0, -1)
+        reslice_cursor.SetZViewUp(0, -1, 0)
+        global viewer_callback
         viewer_callback = ResliceImageViewerCallback(viewers)
+
+    viewers[axis] = reslice_image_viewer
 
     return reslice_image_viewer
 
