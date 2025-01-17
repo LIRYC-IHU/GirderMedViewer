@@ -2,6 +2,7 @@ import asyncio
 from math import floor
 import logging
 import sys
+import traceback
 from time import time
 
 from collections import defaultdict
@@ -141,8 +142,8 @@ class GirderFileSelector(gwc.GirderFileManager):
                 )
             with self.file_downloader.download_file(files[0]) as file_path:
                 self.quad_view.load_files(file_path, item["_id"])
-        except Exception as e:
-            logger.error(f"Error loading file {item['_id']}: {e}")
+        except Exception:
+            logger.error(f"Error loading file {item['_id']}: {traceback.format_exc()}")
             self.unselect_item(item)
 
     def set_api_url(self, api_url, **kwargs):
