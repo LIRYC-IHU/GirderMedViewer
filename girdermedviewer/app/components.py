@@ -40,11 +40,6 @@ server = get_server(client_type="vue2")
 state, ctrl = server.state, server.controller
 
 
-@debounce(0.3)
-def debounced_flush():
-    state.flush()
-
-
 class GirderFileSelector(gwc.GirderFileManager):
     def __init__(self, quad_view, **kwargs):
         state.selected_in_location = []
@@ -317,7 +312,7 @@ class VtkView(vtk.VtkRemoteView):
     """ Base class for VTK views """
     def __init__(self, **kwargs):
         renderer, render_window, interactor = create_rendering_pipeline()
-        super().__init__(render_window, **kwargs)
+        super().__init__(render_window, interactive_quality=80, **kwargs)
         self.renderer = renderer
         self.render_window = render_window
         self.interactor = interactor
@@ -346,11 +341,40 @@ class VtkView(vtk.VtkRemoteView):
 
 class SliceView(VtkView):
     """ Display volume as a 2D slice along a given axis """
+    ctrl.debounced_flush = debounce(0.3)(state.flush)
+
     def __init__(self, axis, **kwargs):
         super().__init__(**kwargs)
         self.axis = axis
         self._build_ui()
         state.change("position")(self.set_position)
+        ctrl.update_other_slice_views.add(self.update_from_other)
+        ctrl.debounced_end_interaction.add(debounce(0.3)(self.end_interaction))
+
+    def update_from_other(self, other, interaction):
+        """
+        Rendering of the view being interacted with is already taken
+        cared of automatically by the client side.
+        Because interacting with the reslice cursor impacts the
+        the other slice views, they must be updated client-side
+        :param interaction True for StartInteraction or Interaction,
+        False for EndInteraction, None for regular update.
+        :type interaction bool or None
+        """
+        if self == other:
+            return
+        if interaction is True:
+            # start_animation() no-op if already in animation
+            # render with less quality than the currently interacted view 
+            self.start_animation(fps=15, quality=int(self.interactive_quality / 3))
+            self.update()
+        elif interaction is False:
+            self.stop_animation()  # does a high quality render
+        else:  # interaction is None
+            self.update()
+
+    def end_interaction(self):
+        self.update_from_other(None, False)
 
     def add_volume(self, image_data, data_id=None):
         reslice_image_viewer = render_volume_in_slice(
@@ -365,9 +389,9 @@ class SliceView(VtkView):
         reslice_image_viewer.AddObserver(
             'InteractionEvent', self.on_slice_scroll)
         reslice_cursor_widget.AddObserver(
-            'InteractionEvent', self.on_reslice_axes_interaction)
+            'InteractionEvent', self.on_reslice_cursor_interaction)
         reslice_cursor_widget.AddObserver(
-            'EndInteractionEvent', self.on_reslice_axes_end_interaction)
+            'EndInteractionEvent', self.on_reslice_cursor_end_interaction)
 
         self.update()
 
@@ -389,24 +413,39 @@ class SliceView(VtkView):
     def on_slice_scroll(self, reslice_image_viewer, event):
         """
         Triggered when scrolling the current image.
-        Because it is called within a co-routine, position is not flushed right away.
+        It is the first way to modify the reslice cursor
+        :see-also on_reslice_cursor_interaction
         """
+        # Because it is called within a co-routine, position is not
+        # flushed right away.
         state.position = get_reslice_center(reslice_image_viewer)
-        debounced_flush()
+        ctrl.debounced_flush()
 
-    def on_reslice_axes_interaction(self, reslice_image_widget, event):
+        ctrl.update_other_slice_views(self, interaction=True)
+        ctrl.debounced_end_interaction()
+
+    def on_reslice_cursor_interaction(self, reslice_image_widget, event):
         """
         Triggered when interacting with oblique lines.
         Because it is called within a co-routine, position is not flushed right away.
         """
         state.position = get_reslice_center(reslice_image_widget)
         state.normals = get_reslice_normals(reslice_image_widget)
+        ctrl.update_other_slice_views(self, interaction=True)
 
-    def on_reslice_axes_end_interaction(self, reslice_image_widget, event):
-        state.flush()
+    def on_reslice_cursor_end_interaction(self, reslice_image_widget, event):
+        state.flush()  # flush state.position
+        ctrl.update_other_slice_views(self, interaction=False)
+
 
     def set_position(self, position, **kwargs):
         logger.debug(f"set_position: {position}")
+        modified = False
+        for reslice_image_viewer in self.get_reslice_image_viewers():
+            modified = set_reslice_center(reslice_image_viewer, position) or modified
+        if modified:
+            self.update()
+
         for reslice_image_viewer in self.get_reslice_image_viewers():
             set_reslice_center(reslice_image_viewer, position)
 

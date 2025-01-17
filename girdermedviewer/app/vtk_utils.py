@@ -103,7 +103,14 @@ def get_reslice_center(reslice_object):
 
 
 def set_reslice_center(reslice_object, new_center):
+    reslice_cursor = get_reslice_cursor(reslice_object)
+    center = reslice_cursor.GetCenter()
+    if (
+            center[0] == new_center[0] and center[1] == center[1] and
+            center[2] == new_center[2]):
+        return False
     get_reslice_cursor(reslice_object).SetCenter(new_center)
+    return True
 
 
 def get_reslice_normals(reslice_object):
