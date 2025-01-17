@@ -20,8 +20,8 @@ from .vtk_utils import (
     create_rendering_pipeline,
     get_reslice_center,
     get_reslice_normals,
-    load_file,
     load_mesh,
+    load_volume,
     render_mesh_in_3D,
     render_mesh_in_slice,
     render_volume_in_3D,
@@ -471,7 +471,7 @@ class QuadView(VContainer):
             for view in self.views:
                 view.add_mesh(poly_data, data_id)
         else:
-            image_data = load_file(file_path)
+            image_data = load_volume(file_path)
             for view in self.views:
                 view.add_volume(image_data, data_id)
 

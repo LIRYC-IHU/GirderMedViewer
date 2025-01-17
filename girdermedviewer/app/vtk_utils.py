@@ -302,7 +302,7 @@ def create_rendering_pipeline(n_views):
     return renderers, render_windows, interactors
 
 
-def load_file(file_path):
+def load_volume(file_path):
     """Read a file and return a vtkImageData object"""
     logger.debug(f"Loading volume {file_path}")
     if file_path.endswith((".nii", ".nii.gz")):
