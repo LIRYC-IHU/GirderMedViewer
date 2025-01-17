@@ -35,38 +35,6 @@ logger.setLevel(logging.DEBUG)
 # FIXME do not use global variable
 # dict[axis:vtkResliceImageViewer]
 viewers = dict()
-viewer_callback = None
-
-
-# Callback class used to refresh all views.
-class ResliceImageViewerCallback(object):
-    def __init__(self, renderers):
-        self.renderers = renderers
-
-    def get_renderer(self, caller):
-        # Find caller to synchronize Window/Level in Axis-aligned mode
-        for renderer in self.renderers.values():
-            if (
-                vtkInteractorStyleImage.SafeDownCast(caller) ==
-                renderer.GetInteractorStyle()
-            ):
-                return renderer
-        return None
-
-    def __call__(self, caller, ev):
-        calling_renderer = self.get_renderer(caller)
-        if calling_renderer is None:
-            return
-
-        for renderer in self.renderers.values():
-            # (Axis-aligned): Window/Level must be synchronized to
-            if calling_renderer == renderer:
-                continue
-            renderer.SetColorWindow(calling_renderer.GetColorWindow())
-            renderer.SetColorLevel(calling_renderer.GetColorLevel())
-
-            renderer.Render()
-
 
 def set_oblique_visibility(reslice_image_viewer, visible):
     reslice_cursor_widget = reslice_image_viewer.GetResliceCursorWidget()
@@ -110,6 +78,15 @@ def set_reslice_center(reslice_object, new_center):
             center[2] == new_center[2]):
         return False
     get_reslice_cursor(reslice_object).SetCenter(new_center)
+    return True
+
+
+def set_window_level(reslice_image_viewer, new_window_level):
+    if (reslice_image_viewer.GetColorWindow() == new_window_level[0] and
+            reslice_image_viewer.GetColorLevel() == new_window_level[1]):
+        return False
+    reslice_image_viewer.SetColorWindow(new_window_level[0])
+    reslice_image_viewer.SetColorLevel(new_window_level[1])
     return True
 
 
@@ -157,8 +134,6 @@ def get_reslice_image_viewer(axis=-1):
         reslice_cursor.SetYViewUp(0, 0, -1)
         reslice_cursor.GetPlane(2).SetNormal(0, 0, -1)
         reslice_cursor.SetZViewUp(0, -1, 0)
-        global viewer_callback
-        viewer_callback = ResliceImageViewerCallback(viewers)
 
     viewers[axis] = reslice_image_viewer
 
@@ -221,32 +196,8 @@ def render_volume_in_slice(image_data, renderer, axis=2, obliques=True):
         .SetTranslation(
             vtkCommand.LeftButtonPressEvent, vtkWidgetEvent.Rotate
         )
-    # Update all views on events
-    # FIXME remove useless events
-    reslice_cursor_widget.AddObserver('AnyEvent', viewer_callback)
-    reslice_image_viewer.AddObserver('AnyEvent', viewer_callback)
-    reslice_image_viewer.GetInteractorStyle().AddObserver(
-        'WindowLevelEvent',
-        viewer_callback
-    )
-
     # Oblique
     reslice_image_viewer.SetResliceModeToOblique()
-    reslice_cursor_widget.AddObserver(
-        'ResliceAxesChangedEvent', viewer_callback
-    )
-    reslice_cursor_widget.AddObserver(
-        'WindowLevelEvent', viewer_callback
-    )
-    reslice_cursor_widget.AddObserver(
-        'ResliceThicknessChangedEvent', viewer_callback
-    )
-    reslice_cursor_widget.AddObserver(
-        'ResetCursorEvent', viewer_callback
-    )
-    reslice_image_viewer.AddObserver(
-        'SliceChangedEvent', viewer_callback
-    )
 
     if not obliques:
         set_oblique_visibility(reslice_image_viewer, obliques)

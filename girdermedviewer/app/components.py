@@ -27,7 +27,8 @@ from .vtk_utils import (
     render_volume_in_3D,
     render_volume_in_slice,
     set_oblique_visibility,
-    set_reslice_center
+    set_reslice_center,
+    set_window_level
 )
 
 from girder_client import GirderClient
@@ -348,6 +349,7 @@ class SliceView(VtkView):
         self.axis = axis
         self._build_ui()
         state.change("position")(self.set_position)
+        state.change("window_level")(self.set_window_level)
         ctrl.update_other_slice_views.add(self.update_from_other)
         ctrl.debounced_end_interaction.add(debounce(0.3)(self.end_interaction))
 
@@ -392,6 +394,8 @@ class SliceView(VtkView):
             'InteractionEvent', self.on_reslice_cursor_interaction)
         reslice_cursor_widget.AddObserver(
             'EndInteractionEvent', self.on_reslice_cursor_end_interaction)
+        reslice_image_viewer.GetInteractorStyle().AddObserver(
+            'WindowLevelEvent', self.on_window_leveling)
 
         self.update()
 
@@ -437,6 +441,16 @@ class SliceView(VtkView):
         state.flush()  # flush state.position
         ctrl.update_other_slice_views(self, interaction=False)
 
+    def on_window_leveling(self, interactor_style, event):
+        # Because it is called within a co-routine, window_level is not
+        # flushed right away.
+        state.window_level = (
+            interactor_style.GetCurrentImageProperty().GetColorWindow(),
+            interactor_style.GetCurrentImageProperty().GetColorLevel())
+        ctrl.debounced_flush()
+
+        ctrl.update_other_slice_views(self, interaction=True)
+        ctrl.debounced_end_interaction()
 
     def set_position(self, position, **kwargs):
         logger.debug(f"set_position: {position}")
@@ -446,8 +460,13 @@ class SliceView(VtkView):
         if modified:
             self.update()
 
+    def set_window_level(self, window_level, **kwargs):
+        logger.debug(f"set_window_level: {window_level}")
+        modified = False
         for reslice_image_viewer in self.get_reslice_image_viewers():
-            set_reslice_center(reslice_image_viewer, position)
+            modified = set_window_level(reslice_image_viewer, window_level) or modified
+        if modified:
+            self.update()
 
     def get_reslice_image_viewers(self):
         return [obj for objs in self.data.values() for obj in objs if obj.IsA('vtkResliceImageViewer')]
@@ -471,7 +490,7 @@ class ThreeDView(VtkView):
         )
         self.register_data(data_id, volume)
         self.update()
-    
+
     def add_mesh(self, poly_data, data_id=None):
         actor = render_mesh_in_3D(
             poly_data,
