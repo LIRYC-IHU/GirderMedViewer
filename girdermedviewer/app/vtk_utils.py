@@ -278,6 +278,7 @@ def render_mesh_in_3D(poly_data, renderer):
 def create_rendering_pipeline():
     renderer = vtkRenderer()
     render_window = vtkRenderWindow()
+    render_window.ShowWindowOff()
     interactor = vtkRenderWindowInteractor()
 
     render_window.AddRenderer(renderer)
