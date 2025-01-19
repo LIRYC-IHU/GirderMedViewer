@@ -22,8 +22,10 @@ from .vtk_utils import (
     get_reslice_normals,
     load_mesh,
     load_volume,
+    remove_prop,
     render_mesh_in_3D,
     render_mesh_in_slice,
+    render_volume_as_overlay_in_slice,
     render_volume_in_3D,
     render_volume_in_slice,
     set_oblique_visibility,
@@ -99,10 +101,6 @@ class GirderFileSelector(gwc.GirderFileManager):
 
     def select_item(self, item):
         assert item.get('_modelType') == 'item', "Only item can be selected"
-        is_mesh = item.get('name', '').endswith('.stl')
-        # only 1 volume at a time for now
-        if not is_mesh:
-            self.unselect_items()
 
         state.displayed = state.displayed + [item]
 
@@ -324,20 +322,18 @@ class VtkView(vtk.VtkRemoteView):
         # removed when data_id is unregistered.
         self.data[data_id].append(data)
 
-    def unregister_data(self, data_id, no_render=False):
-        for data in self.data[data_id]:
-            if data.IsA("vtkVolume"):
-                self.renderer.RemoveVolume(data)
-            elif data.IsA("vtkActor"):
-                self.renderer.RemoveActor(data)
-            elif data.IsA("vtkImageViewer2"):
-                data.SetupInteractor(None)
-                # FIXME: check for leak
-                # data.SetRenderer(None)
-                # data.SetRenderWindow(None)
-        self.data.pop(data_id)
+    def unregister_data(self, data_id, no_render=False, only_data=None):
+        for data in list(self.data[data_id]):
+            if only_data is None or data == only_data:
+                remove_prop(self.renderer, data)
+                self.data[data_id].remove(data)
+        if len(self.data[data_id]) == 0:
+            self.data.pop(data_id)
         if not no_render:
             self.update()
+
+    def get_data_id(self, data):
+        return next((key for key, value in self.data.items() if data in value), None)
 
 
 class SliceView(VtkView):
@@ -352,6 +348,24 @@ class SliceView(VtkView):
         state.change("window_level")(self.set_window_level)
         ctrl.update_other_slice_views.add(self.update_from_other)
         ctrl.debounced_end_interaction.add(debounce(0.3)(self.end_interaction))
+
+    def unregister_data(self, data_id, no_render=False, only_data=None):
+        super().unregister_data(data_id, no_render=True, only_data=None)
+        # we can't have secondary volumes without at least a primary volume
+        if self.has_primary_volume() is False and self.has_secondary_volume():
+            image_slice = self.get_image_slices()[0]
+            secondary_data_id = self.get_data_id(image_slice)
+            # Replace the secondary volume into a primary volume
+            self.add_primary_volume(image_slice.GetMapper().GetDataSetInput(), secondary_data_id)
+            super().unregister_data(secondary_data_id, True, only_data=image_slice)
+        if not no_render:
+            self.update()
+
+    def get_reslice_image_viewers(self):
+        return [obj for objs in self.data.values() for obj in objs if obj.IsA('vtkResliceImageViewer')]
+
+    def get_image_slices(self):
+        return [obj for objs in self.data.values() for obj in objs if obj.IsA('vtkImageSlice')]
 
     def update_from_other(self, other, interaction):
         """
@@ -378,7 +392,7 @@ class SliceView(VtkView):
     def end_interaction(self):
         self.update_from_other(None, False)
 
-    def add_volume(self, image_data, data_id=None):
+    def add_primary_volume(self, image_data, data_id=None):
         reslice_image_viewer = render_volume_in_slice(
             image_data,
             self.renderer,
@@ -398,6 +412,27 @@ class SliceView(VtkView):
             'WindowLevelEvent', self.on_window_leveling)
 
         self.update()
+
+    def add_secondary_volume(self, image_data, data_id=None):
+        actor = render_volume_as_overlay_in_slice(
+            image_data,
+            self.renderer,
+            self.axis
+        )
+        self.register_data(data_id, actor)
+        self.update()
+
+    def has_primary_volume(self):
+        return len(self.get_reslice_image_viewers()) > 0
+
+    def has_secondary_volume(self):
+        return len(self.get_image_slices()) > 0
+
+    def add_volume(self, image_data, data_id=None):
+        if self.has_primary_volume() is False:
+            self.add_primary_volume(image_data, data_id)
+        else:
+            self.add_secondary_volume(image_data, data_id)
 
     def add_mesh(self, poly_data, data_id=None):
         actor = render_mesh_in_slice(
@@ -435,6 +470,7 @@ class SliceView(VtkView):
         """
         state.position = get_reslice_center(reslice_image_widget)
         state.normals = get_reslice_normals(reslice_image_widget)
+
         ctrl.update_other_slice_views(self, interaction=True)
 
     def on_reslice_cursor_end_interaction(self, reslice_image_widget, event):
@@ -467,9 +503,6 @@ class SliceView(VtkView):
             modified = set_window_level(reslice_image_viewer, window_level) or modified
         if modified:
             self.update()
-
-    def get_reslice_image_viewers(self):
-        return [obj for objs in self.data.values() for obj in objs if obj.IsA('vtkResliceImageViewer')]
 
     def _build_ui(self):
         with self:

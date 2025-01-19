@@ -15,6 +15,8 @@ from vtk import (
     vtkColorTransferFunction,
     vtkCutter,
     vtkImageReslice,
+    vtkImageResliceMapper,
+    vtkImageSlice,
     vtkMatrix4x4,
     vtkNIFTIImageReader,
     vtkPiecewiseFunction,
@@ -163,7 +165,7 @@ def render_volume_in_slice(image_data, renderer, axis=2, obliques=True):
         reslice_cursor_widget.GetRepresentation()
     )
 
-    # vtkResliceImageViewer instance share share the same lookup table
+    # vtkResliceImageViewer instances share the same lookup table
     reslice_image_viewer.SetLookupTable(get_reslice_image_viewer(-1).GetLookupTable())
 
     # (Oblique): Make all vtkResliceImageViewer instance share the same
@@ -206,6 +208,35 @@ def render_volume_in_slice(image_data, renderer, axis=2, obliques=True):
     renderer.ResetCameraScreenSpace(0.8)
 
     return reslice_image_viewer
+
+
+def render_volume_as_overlay_in_slice(image_data, renderer, axis=2, opacity=0.8):
+    reslice_image_viewer = get_reslice_image_viewer(axis)
+    reslice_cursor = get_reslice_cursor(reslice_image_viewer)
+
+    imageMapper = vtkImageResliceMapper()
+    imageMapper.SetInputData(image_data)
+    imageMapper.SetSlicePlane(reslice_cursor.GetPlane(axis))
+
+    image_slice = vtkImageSlice()
+    image_slice.SetMapper(imageMapper)
+    slice_property = image_slice.GetProperty()
+    # actor.GetProperty().SetLookupTable(ColorTransferFunction)
+    slice_property.SetInterpolationTypeToNearest()
+    slice_property.SetOpacity(opacity)
+
+    # vtkResliceImageViewer computes the default color window/level.
+    # here we need to do it manually
+    range = image_data.GetScalarRange()
+    slice_property.SetColorWindow(range[1] - range[0])
+    slice_property.SetColorLevel((range[0] + range[1]) / 2.0)
+
+    renderer.AddActor(image_slice)
+
+    # Fit volume to viewport
+    renderer.ResetCameraScreenSpace(0.8)
+
+    return image_slice
 
 
 def render_mesh_in_slice(poly_data, axis, renderer):
@@ -273,6 +304,20 @@ def render_mesh_in_3D(poly_data, renderer):
     renderer.ResetCameraScreenSpace(0.8)
 
     return actor
+
+
+def remove_prop(renderer, prop):
+    if isinstance(prop, vtkVolume):
+        renderer.RemoveVolume(prop)
+    elif isinstance(prop, vtkActor) or isinstance(prop, vtkImageSlice):
+        renderer.RemoveActor(prop)
+    elif isinstance(prop, vtkResliceImageViewer):
+        prop.SetupInteractor(None)
+        # FIXME: check for leak
+        # prop.SetRenderer(None)
+        # prop.SetRenderWindow(None)
+    else:
+        raise Exception(f"Can't remove prop {prop}")
 
 
 def create_rendering_pipeline():
