@@ -2,12 +2,14 @@ import asyncio
 from math import floor
 import logging
 import sys
+from collections import defaultdict
+from enum import Enum
 from time import time
 
-from collections import defaultdict
+
 from trame_server.utils.asynchronous import create_task
 from trame.app import get_server
-from trame.widgets import gwc, html, vtk
+from trame.widgets import gwc, html, vtk, client
 from trame.widgets.vuetify2 import (VContainer, VRow, VCol, VTooltip,
                                     Template, VBtn, VIcon, VCheckbox)
 from typing import Callable, Optional
@@ -269,7 +271,7 @@ class ToolsStrip(html.Div):
 
 
 class ViewGutter(html.Div):
-    def __init__(self, view=0):
+    def __init__(self, view, **kwargs):
         super().__init__(
             classes="gutter",
             style=(
@@ -278,8 +280,11 @@ class ViewGutter(html.Div):
                 "left: 0;"
                 "background-color: transparent;"
                 "height: 100%;"
-            )
+            ),
+            v_if=("displayed.length>0 && !file_loading_busy",),
+            **kwargs
         )
+        assert view.id is not None
         self.view = view
         with self:
             with html.Div(
@@ -287,26 +292,14 @@ class ViewGutter(html.Div):
                 classes="gutter-content d-flex flex-column fill-height pa-2"
             ):
                 Button(
-                    v_if=("quad_view",),
-                    tooltip="Extend to fullscreen",
-                    icon="mdi-fullscreen",
+                    tooltip=("{{ fullscreen==null ? 'Extend to fullscreen' : 'Exit fullscreen' }}",),
+                    icon=("{{ fullscreen==null ? 'mdi-fullscreen' : 'mdi-fullscreen-exit' }}",),
                     icon_color="white",
-                    click=self.extend_fullscreen,
+                    click=self.toggle_fullscreen,
                 )
 
-                Button(
-                    v_else=True,
-                    tooltip="Exit fullscreen",
-                    icon="mdi-fullscreen-exit",
-                    icon_color="white",
-                    click=self.exit_fullscreen,
-                )
-
-    def extend_fullscreen(self):
-        state.quad_view = False
-
-    def exit_fullscreen(self):
-        state.quad_view = True
+    def toggle_fullscreen(self):
+        state.fullscreen = None if state.fullscreen else self.view.id
 
 
 class VtkView(vtk.VtkRemoteView):
@@ -348,11 +341,17 @@ class VtkView(vtk.VtkRemoteView):
             self.update()
 
 
+class Orientation(Enum):
+    SAGITTAL = 0
+    CORONAL = 1
+    AXIAL = 2
+
+
 class SliceView(VtkView):
     """ Display volume as a 2D slice along a given axis """
-    def __init__(self, axis, **kwargs):
-        super().__init__(**kwargs)
-        self.axis = axis
+    def __init__(self, orientation, **kwargs):
+        super().__init__(classes=f"slice {orientation.name.lower()}", **kwargs)
+        self.orientation = orientation
         self._build_ui()
 
         state.change("position")(self.set_position)
@@ -362,7 +361,7 @@ class SliceView(VtkView):
             data_id,
             image_data,
             self.renderer,
-            self.axis,
+            self.orientation.value,
             obliques=state.obliques_visibility
         )
         self.register_data(data_id, reslice_image_viewer)
@@ -429,7 +428,7 @@ class SliceView(VtkView):
 
 class ThreeDView(VtkView):
     def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+        super().__init__(classes="threed", **kwargs)
         self._build_ui()
 
     def add_volume(self, image_data, data_id=None):
@@ -461,11 +460,13 @@ class QuadView(VContainer):
     def __init__(self, **kwargs):
         super().__init__(
             classes="fill-height pa-0",
+            fluid=True,
             **kwargs
         )
         self.twod_views = []
         self.threed_views = []
         self.views = []
+        state.fullscreen = None
         self._build_ui()
 
         ctrl.reset = self.reset
@@ -506,22 +507,30 @@ class QuadView(VContainer):
 
     def _build_ui(self):
         with self:
-            with VRow(style="height:50%", no_gutters=True):
-                with VCol(cols=6):
-                    with SliceView(0) as sag_view:
-                        self.twod_views.append(sag_view)
-                        self.views.append(sag_view)
-                with VCol(cols=6):
-                    with ThreeDView() as threed_view:
-                        self.threed_views.append(threed_view)
-                        self.views.append(threed_view)
-
-            with VRow(style="height:50%", no_gutters=True):
-                with VCol(cols=6):
-                    with SliceView(1) as cor_view:
-                        self.twod_views.append(cor_view)
-                        self.views.append(cor_view)
-                with VCol(cols=6):
-                    with SliceView(2) as ax_view:
-                        self.twod_views.append(ax_view)
-                        self.views.append(ax_view)
+            with html.Div(
+                style=("""{
+                       display: 'grid',
+                       'grid-template-columns': fullscreen == null ? '1fr 1fr' : 'none',
+                       gap: '2px',
+                       width: '100%',
+                       height: '100%',
+                       position: 'relative'
+                       }""",),
+            ):
+                with SliceView(Orientation.SAGITTAL,
+                               id="sag_view",
+                               v_if="fullscreen == null || fullscreen == 'sag_view'") as sag_view:
+                    self.twod_views.append(sag_view)
+                    self.views.append(sag_view)
+                with ThreeDView(id="threed_view",
+                                v_if="fullscreen == null || fullscreen == 'threed_view'") as threed_view:
+                    self.threed_views.append(threed_view)
+                    self.views.append(threed_view)
+                with SliceView(Orientation.CORONAL, id="cor_view",
+                               v_if="fullscreen == null || fullscreen == 'cor_view'") as cor_view:
+                    self.twod_views.append(cor_view)
+                    self.views.append(cor_view)
+                with SliceView(Orientation.AXIAL, id="ax_view",
+                               v_if="fullscreen == null || fullscreen == 'ax_view'") as ax_view:
+                    self.twod_views.append(ax_view)
+                    self.views.append(ax_view)
