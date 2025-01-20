@@ -5,13 +5,11 @@ import sys
 from time import time
 
 from collections import defaultdict
-
-
 from trame_server.utils.asynchronous import create_task
 from trame.app import get_server
 from trame.widgets import gwc, html, vtk
-from trame.widgets.vuetify2 import (VContainer, VRow, VCol, VTooltip, Template,
-                                    VBtn, VCard, VIcon)
+from trame.widgets.vuetify2 import (VContainer, VRow, VCol, VTooltip,
+                                    Template, VBtn, VIcon, VCheckbox)
 from typing import Callable, Optional
 from .girder_utils import FileDownloader, CacheMode
 from .utils import debounce
@@ -25,10 +23,11 @@ from .vtk_utils import (
     render_mesh_in_slice,
     render_volume_in_3D,
     render_volume_in_slice,
+    reset_reslice,
+    reset_3D,
     set_oblique_visibility,
     set_reslice_center
 )
-
 from girder_client import GirderClient
 
 logging.basicConfig(stream=sys.stdout)
@@ -42,6 +41,48 @@ state, ctrl = server.state, server.controller
 @debounce(0.3)
 def debounced_flush():
     state.flush()
+
+
+class GirderDrawer(VContainer):
+    def __init__(self, quad_view, **kwargs):
+        super().__init__(
+            classes="fill-height pa-0",
+            **kwargs
+        )
+        self.quad_view = quad_view
+        self._build_ui()
+
+    def _build_ui(self):
+        with self:
+            with VRow(
+                style="height:100%",
+                align_content="start",
+                justify="center",
+                no_gutters=True
+            ):
+                with VCol(cols=12):
+                    GirderFileSelector(self.quad_view)
+
+                with VCol(cols=12):
+                    # TODO To Replace with ItemList
+                    gwc.GirderDataDetails(
+                        v_if=("detailed.length > 0",),
+                        action_keys=("action_keys",),
+                        value=("detailed",)
+                    )
+                with VCol(v_if=("displayed.length > 0",), cols="auto"):
+                    Button(
+                        tooltip="Clear View",
+                        icon="mdi-close-box",
+                        click=self.clear_views,
+                        loading=("file_loading_busy",),
+                        size=60,
+                        disabled=("file_loading_busy",),
+                    )
+
+    def clear_views(self):
+        self.quad_view.clear()
+        state.displayed = []
 
 
 class GirderFileSelector(gwc.GirderFileManager):
@@ -129,13 +170,13 @@ class GirderFileSelector(gwc.GirderFileManager):
     def load_item(self, item):
         logger.debug(f"Loading files {item}")
         try:
-            logger.debug(f"Listing files")
+            logger.debug("Listing files")
             files = list(self.file_downloader.get_item_files(item))
             logger.debug(f"Files {files}")
             if len(files) != 1:
                 raise Exception(
                     "No file to load. Please check the selected item."
-                    if (not files) else \
+                    if (not files) else
                     "You are trying to load more than one file. \
                     If so, please load a compressed archive."
                 )
@@ -204,41 +245,28 @@ class Button():
 
 
 class ToolsStrip(html.Div):
-    def __init__(self, quad_view = None, **kwargs):
+    def __init__(self, **kwargs):
         super().__init__(
             classes="bg-grey-darken-4 d-flex flex-column align-center",
             **kwargs,
         )
-        self.quad_view = quad_view
 
         with self:
-            # FIXME use a unique button
-            with html.Div(v_if=("display_obliques",),):
-                Button(
-                    tooltip="Hide obliques",
-                    icon="mdi-eye-remove-outline",
-                    click=lambda: self.quad_view.set_obliques_visibility(False),
-                    disabled=("displayed.length === 0",)
-                )
-
-            with html.Div(v_else=True):
-                Button(
-                    tooltip="Show obliques",
-                    icon="mdi-eye-outline",
-                    click=lambda: self.quad_view.set_obliques_visibility(True),
-                    disabled=("displayed.length === 0",),
-                )
-
-            Button(
-                tooltip="Clear View",
-                icon="mdi-reload",
-                click=lambda: self.quad_view.remove_volume(),
-                loading=("file_loading_busy",),
-                disabled=("displayed.length === 0",)
+            VCheckbox(
+                v_model=("obliques_visibility",),
+                off_icon='mdi-eye-outline',
+                on_icon='mdi-eye-remove-outline',
+                color="black",
+                disabled=("displayed.length === 0 || file_loading_busy",)
             )
 
-    def set_quad_view(self, quad_view):
-        self.quad_view = quad_view
+            Button(
+                tooltip="Reset Views",
+                icon="mdi-camera-flip-outline",
+                click=ctrl.reset,
+                disabled=("displayed.length === 0 || file_loading_busy",)
+            )
+
 
 class ViewGutter(html.Div):
     def __init__(self, view=0):
@@ -259,13 +287,6 @@ class ViewGutter(html.Div):
                 classes="gutter-content d-flex flex-column fill-height pa-2"
             ):
                 Button(
-                    tooltip="Reset View",
-                    icon="mdi-camera-flip-outline",
-                    icon_color="white",
-                    click=self.reset_view,
-                )
-
-                Button(
                     v_if=("quad_view",),
                     tooltip="Extend to fullscreen",
                     icon="mdi-fullscreen",
@@ -280,30 +301,6 @@ class ViewGutter(html.Div):
                     icon_color="white",
                     click=self.exit_fullscreen,
                 )
-
-    def reset_view(self):
-        reslice_image = self.view.render_window.reslice_image
-        if reslice_image:
-            bounds = self.view.renderer.GetViewProps() \
-                .GetLastProp() \
-                .GetBounds()
-            center = (
-                (bounds[0] + bounds[1]) / 2.0,
-                (bounds[2] + bounds[3]) / 2.0,
-                (bounds[4] + bounds[5]) / 2.0
-            )
-            # Replace slice cursor at the volume center
-            reslice_image.GetResliceCursor().SetCenter(center)
-            reslice_image.GetResliceCursorWidget().ResetResliceCursor()
-        else:
-            self.view.renderer.GetActiveCamera().SetFocalPoint((0, 0, 0))
-            self.view.renderer.GetActiveCamera().SetPosition((0, 0, 1))
-
-        self.view.renderer.ResetCameraScreenSpace(0.8)
-        self.view.render_window.Render()
-        self.view.interactors.Render()
-
-        ctrl.view_update()
 
     def extend_fullscreen(self):
         state.quad_view = False
@@ -321,6 +318,7 @@ class VtkView(vtk.VtkRemoteView):
         self.render_window = render_windows[0]
         self.interactor = interactors[0]
         self.data = defaultdict(list)
+        ctrl.view_update.add(self.update)
 
     def register_data(self, data_id, data):
         # Associate data (typically an actor) to data_id so that it can be
@@ -342,6 +340,13 @@ class VtkView(vtk.VtkRemoteView):
         if not no_render:
             self.update()
 
+    def unregister_all_data(self, no_render=False):
+        data_ids = list(self.data.keys())
+        for data_id in data_ids:
+            self.unregister_data(data_id, True)
+        if not no_render:
+            self.update()
+
 
 class SliceView(VtkView):
     """ Display volume as a 2D slice along a given axis """
@@ -349,6 +354,7 @@ class SliceView(VtkView):
         super().__init__(**kwargs)
         self.axis = axis
         self._build_ui()
+
         state.change("position")(self.set_position)
 
     def add_volume(self, image_data, data_id=None):
@@ -357,7 +363,7 @@ class SliceView(VtkView):
             image_data,
             self.renderer,
             self.axis,
-            obliques=state.display_obliques
+            obliques=state.obliques_visibility
         )
         self.register_data(data_id, reslice_image_viewer)
 
@@ -379,7 +385,11 @@ class SliceView(VtkView):
         self.register_data(data_id, actor)
         self.update()
 
-    # FIXME: react to display_obliques change
+    def reset(self):
+        for reslice_image_viewer in self.get_reslice_image_viewers():
+            reset_reslice(reslice_image_viewer)
+        self.update()
+
     def set_obliques_visibility(self, visible):
         for reslice_image_viewer in self.get_reslice_image_viewers():
             set_oblique_visibility(reslice_image_viewer, visible)
@@ -415,15 +425,13 @@ class SliceView(VtkView):
     def _build_ui(self):
         with self:
             ViewGutter(self)
-            ctrl.view_update.add(self.update)
-            ctrl.view_reset_camera.add(self.reset_camera)
 
 
 class ThreeDView(VtkView):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._build_ui()
-    
+
     def add_volume(self, image_data, data_id=None):
         volume = render_volume_in_3D(
             image_data,
@@ -431,7 +439,7 @@ class ThreeDView(VtkView):
         )
         self.register_data(data_id, volume)
         self.update()
-    
+
     def add_mesh(self, poly_data, data_id=None):
         actor = render_mesh_in_3D(
             poly_data,
@@ -440,11 +448,13 @@ class ThreeDView(VtkView):
         self.register_data(data_id, actor)
         self.update()
 
+    def reset(self):
+        reset_3D(self.renderer)
+        self.update()
+
     def _build_ui(self):
         with self:
             ViewGutter(self)
-            ctrl.view_update.add(self.update)
-            ctrl.view_reset_camera.add(self.reset_camera)
 
 
 class QuadView(VContainer):
@@ -458,9 +468,27 @@ class QuadView(VContainer):
         self.views = []
         self._build_ui()
 
+        ctrl.reset = self.reset
+        state.change("obliques_visibility")(self.set_obliques_visibility)
+
     def remove_data(self, data_id=None):
         for view in self.views:
             view.unregister_data(data_id)
+        ctrl.view_update()
+
+    def clear(self):
+        for view in self.views:
+            view.unregister_all_data()
+        ctrl.view_update()
+
+    def set_obliques_visibility(self, obliques_visibility, **kwargs):
+        for view in self.twod_views:
+            view.set_obliques_visibility(obliques_visibility)
+        ctrl.view_update()
+
+    def reset(self):
+        for view in self.views:
+            view.reset()
         ctrl.view_update()
 
     def load_files(self, file_path, data_id=None):
@@ -474,12 +502,6 @@ class QuadView(VContainer):
             for view in self.views:
                 view.add_volume(image_data, data_id)
 
-        ctrl.view_update()
-
-    def set_obliques_visibility(self, visible):
-        state.display_obliques = True
-        for view in self.twod_views:
-            view.set_obliques_visibility(visible)
         ctrl.view_update()
 
     def _build_ui(self):
