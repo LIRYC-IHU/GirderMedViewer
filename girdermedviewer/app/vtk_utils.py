@@ -1,5 +1,6 @@
 import logging
 import sys
+from collections import defaultdict
 
 from vtkmodules.all import (
     vtkCommand,
@@ -12,6 +13,7 @@ from vtkmodules.all import (
 )
 from vtk import (
     vtkActor,
+    vtkBoundingBox,
     vtkColorTransferFunction,
     vtkCutter,
     vtkImageReslice,
@@ -90,6 +92,13 @@ def set_window_level(reslice_image_viewer, new_window_level):
     reslice_image_viewer.SetColorWindow(new_window_level[0])
     reslice_image_viewer.SetColorLevel(new_window_level[1])
     return True
+
+
+def reset_reslice(reslice_image_viewer):
+    center = reslice_image_viewer.input.center
+    reslice_image_viewer.GetResliceCursor().SetCenter(center)
+    reslice_image_viewer.GetResliceCursorWidget().ResetResliceCursor()
+    reslice_image_viewer.GetRenderer().ResetCameraScreenSpace(0.8)
 
 
 def get_reslice_normals(reslice_object):
@@ -260,6 +269,18 @@ def render_mesh_in_slice(poly_data, axis, renderer):
     return actor
 
 
+def reset_3D(renderer):
+    bounds = renderer.ComputeVisiblePropBounds()
+    center = [0, 0, 0]
+    vtkBoundingBox(bounds).GetCenter(center)
+    renderer.GetActiveCamera().SetFocalPoint(center)
+    renderer.GetActiveCamera().SetPosition(
+        (bounds[1], bounds[2], center[2])
+    )
+    renderer.GetActiveCamera().SetViewUp(0, 0, 1)
+    renderer.ResetCameraScreenSpace(0.8)
+
+
 def render_volume_in_3D(image_data, renderer):
     volume_mapper = vtkSmartVolumeMapper()
     volume_mapper.SetInputData(image_data)
@@ -287,7 +308,7 @@ def render_volume_in_3D(image_data, renderer):
     volume.SetProperty(volume_property)
 
     renderer.AddVolume(volume)
-    renderer.ResetCameraScreenSpace(0.8)
+    reset_3D(renderer)
 
     return volume
 
