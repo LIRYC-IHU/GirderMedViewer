@@ -249,6 +249,7 @@ class ToolsStrip(html.Div):
             classes="bg-grey-darken-4 d-flex flex-column align-center",
             **kwargs,
         )
+        client.Style(".v-input--selection-controls__input {margin-right: 0px!important}")
 
         with self:
             VCheckbox(
