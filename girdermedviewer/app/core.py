@@ -2,12 +2,14 @@ import ast
 import os
 from urllib.parse import urljoin
 from configparser import ConfigParser
+
 from trame.app import get_server
 from trame.decorators import TrameApp, change, controller
 from trame.widgets import gwc, html
 from trame.ui.vuetify import SinglePageWithDrawerLayout
 from trame.widgets.vuetify2 import (VContainer, VRow, VCol, VBtn, VCard, VIcon)
-from .components import QuadView, ToolsStrip, GirderDrawer
+from .girder.components import GirderDrawer
+from .vtk.components import QuadView, ToolsStrip
 
 # ---------------------------------------------------------
 # Engine class
@@ -18,17 +20,13 @@ from .components import QuadView, ToolsStrip, GirderDrawer
 class MyTrameApp:
     def __init__(self, server=None):
         self.server = get_server(server, client_type="vue2")
-        if self.server.hot_reload:
-            self.server.controller.on_server_reload.add(self._build_ui)
 
         self.load_config()
 
         self.provider = gwc.GirderProvider(value=self.state.api_url, trame_server=self.server)
         self.ctrl.provider_logout = self.provider.logout
 
-        # Set state variable
         self.state.trame__title = "GirderMedViewer"
-        self.state.resolution = 6
         self.state.display_authentication = False
         self.state.obliques_visibility = True
         self.state.main_drawer = False
@@ -38,7 +36,10 @@ class MyTrameApp:
         self.state.detailed = []  # Items for which detailed information is displayed
         self.state.last_clicked = 0
         self.state.action_keys = [{"for": []}]
+
         self.ui = self._build_ui()
+        if self.server.hot_reload:
+            self.server.controller.on_server_reload.add(self._build_ui)
 
     @property
     def state(self):
@@ -73,10 +74,6 @@ class MyTrameApp:
 
         self.state.temp_dir = config.get("download", "directory", fallback=None)
         self.state.cache_mode = config.get("download", "cache_mode", fallback=None)
-
-    @controller.set("reset_resolution")
-    def reset_resolution(self):
-        self.state.resolution = 6
 
     @change("user")
     def set_user(self, user, **kwargs):

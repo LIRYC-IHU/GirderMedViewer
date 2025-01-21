@@ -1,5 +1,42 @@
 import asyncio
 from functools import wraps
+from math import floor
+
+from trame.widgets.vuetify2 import (VTooltip, Template, VBtn, VIcon)
+from typing import Callable, Optional
+
+
+class Button():
+    def __init__(
+        self,
+        *,
+        tooltip: str,
+        icon: str,
+        icon_color: str = None,
+        click: Optional[Callable] = None,
+        size: int = 40,
+        **kwargs,
+    ) -> None:
+
+        with VTooltip(
+            tooltip,
+            right=True,
+            transition="slide-x-transition"
+        ):
+            with Template(v_slot_activator="{ on, attrs }"):
+                with VBtn(
+                    text=True,
+                    rounded=0,
+                    height=size,
+                    width=size,
+                    min_height=size,
+                    min_width=size,
+                    click=click,
+                    v_bind="attrs",
+                    v_on="on",
+                    **kwargs,
+                ):
+                    VIcon(icon, size=floor(0.6 * size), color=icon_color)
 
 
 def debounce(wait):

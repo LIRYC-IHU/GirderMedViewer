@@ -9,6 +9,7 @@ logging.basicConfig(stream=sys.stdout)
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
+
 class CacheMode(Enum):
     No = "No"
     Session = "Session"
