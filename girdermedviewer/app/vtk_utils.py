@@ -1,6 +1,7 @@
 import logging
 import sys
 from collections import defaultdict
+
 from vtkmodules.all import (
     vtkCommand,
     vtkRenderer,
@@ -14,7 +15,11 @@ from vtk import (
     vtkActor,
     vtkBoundingBox,
     vtkColorTransferFunction,
+    vtkCutter,
     vtkImageReslice,
+    vtkImageResliceMapper,
+    vtkImageSlice,
+    vtkMatrix4x4,
     vtkNIFTIImageReader,
     vtkPiecewiseFunction,
     vtkPolyDataMapper,
@@ -22,6 +27,7 @@ from vtk import (
     vtkSmartVolumeMapper,
     vtkSTLReader,
     vtkTransform,
+    vtkTransformFilter,
     vtkVolume,
     vtkVolumeProperty,
 )
@@ -31,43 +37,8 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 # FIXME do not use global variable
-# key = data_id, value= list of vtkResliceImageViewer
-viewers = defaultdict(list)
-# key = data_id, value=ResliceImageViewerCallback
-viewer_callbacks = {}
-
-
-# Callback class used to refresh all views.
-class ResliceImageViewerCallback(object):
-    def __init__(self, renderers):
-        self.renderers = renderers
-
-    def get_renderer(self, caller):
-        # Find caller to synchronize Window/Level in Axis-aligned mode
-        caller_id = -1
-        for i in range(len(self.renderers)):
-            if (
-                vtkInteractorStyleImage.SafeDownCast(caller) ==
-                self.renderers[i].GetInteractorStyle()
-            ):
-                caller_id = i
-                break
-        return self.renderers[caller_id] if caller_id != -1 else None
-
-    def __call__(self, caller, ev):
-        calling_renderer = self.get_renderer(caller)
-        if calling_renderer is None:
-            return
-
-        for renderer in self.renderers:
-            # (Axis-aligned): Window/Level must be synchronized to
-            if calling_renderer == renderer:
-                continue
-            renderer.SetColorWindow(calling_renderer.GetColorWindow())
-            renderer.SetColorLevel(calling_renderer.GetColorLevel())
-
-            renderer.Render()
-
+# dict[axis:vtkResliceImageViewer]
+viewers = dict()
 
 def set_oblique_visibility(reslice_image_viewer, visible):
     reslice_cursor_widget = reslice_image_viewer.GetResliceCursorWidget()
@@ -86,7 +57,7 @@ def get_reslice_cursor(reslice_object):
     :rtype tuple[float, float, float]
     """
     if isinstance(reslice_object, vtkResliceImageViewer):
-        reslice_object = reslice_object.GetResliceCursorWidget()
+        reslice_object = reslice_object.GetResliceCursor()
     if reslice_object.IsA('vtkResliceCursorWidget'):
         reslice_object = reslice_object.GetResliceCursorRepresentation()
     if reslice_object.IsA('vtkResliceCursorRepresentation'):
@@ -104,7 +75,23 @@ def get_reslice_center(reslice_object):
 
 
 def set_reslice_center(reslice_object, new_center):
+    reslice_cursor = get_reslice_cursor(reslice_object)
+    center = reslice_cursor.GetCenter()
+    if (
+            center[0] == new_center[0] and center[1] == center[1] and
+            center[2] == new_center[2]):
+        return False
     get_reslice_cursor(reslice_object).SetCenter(new_center)
+    return True
+
+
+def set_window_level(reslice_image_viewer, new_window_level):
+    if (reslice_image_viewer.GetColorWindow() == new_window_level[0] and
+            reslice_image_viewer.GetColorLevel() == new_window_level[1]):
+        return False
+    reslice_image_viewer.SetColorWindow(new_window_level[0])
+    reslice_image_viewer.SetColorLevel(new_window_level[1])
+    return True
 
 
 def reset_reslice(reslice_image_viewer):
@@ -133,18 +120,42 @@ def get_reslice_normal(reslice_image_viewer, axis):
     return get_reslice_normals(reslice_image_viewer)[axis]
 
 
-def render_volume_in_slice(data_id, image_data, renderer, axis=2, obliques=True):
+def get_reslice_image_viewer(axis=-1):
+    """
+    Returns a matching reslice image viewer or create it if it does not exist.
+    If axis is -1, it returns the firstly added reslice image viewer
+    or create an axial (2) reslice image viewer if none exist.
+    """
+    if axis == -1:
+        try:
+            return next(iter(viewers.values()))
+        except StopIteration:
+            # no Reslice Image Viewer has been created for data_id
+            axis = 2
+    if axis in viewers:
+        return viewers[axis]
+
+    reslice_image_viewer = vtkResliceImageViewer()
+    # is it the firstly created image viewer ?
+    if len(viewers) == 0:
+        reslice_cursor = get_reslice_cursor(reslice_image_viewer)
+        reslice_cursor.GetPlane(0).SetNormal(-1, 0, 0)
+        reslice_cursor.SetXViewUp(0, 0, -1)
+        reslice_cursor.GetPlane(1).SetNormal(0, 1, 0)
+        reslice_cursor.SetYViewUp(0, 0, -1)
+        reslice_cursor.GetPlane(2).SetNormal(0, 0, -1)
+        reslice_cursor.SetZViewUp(0, -1, 0)
+
+    viewers[axis] = reslice_image_viewer
+
+    return reslice_image_viewer
+
+
+def render_volume_in_slice(image_data, renderer, axis=2, obliques=True):
     render_window = renderer.GetRenderWindow()
     interactor = render_window.GetInteractor()
 
-    reslice_image_viewer = vtkResliceImageViewer()
-    viewers[data_id].append(reslice_image_viewer)
-
-    if data_id not in viewer_callbacks:
-        viewer_callback = ResliceImageViewerCallback(viewers[data_id])
-        viewer_callbacks[data_id] = viewer_callback
-    else:
-        viewer_callback = viewer_callbacks[data_id]
+    reslice_image_viewer = get_reslice_image_viewer(axis)
 
     reslice_image_viewer.SetRenderer(renderer)
     reslice_image_viewer.SetRenderWindow(render_window)
@@ -163,11 +174,11 @@ def render_volume_in_slice(data_id, image_data, renderer, axis=2, obliques=True)
         reslice_cursor_widget.GetRepresentation()
     )
 
-    # vtkResliceImageViewer instance share share the same lookup table
-    reslice_image_viewer.SetLookupTable(viewers[data_id][0].GetLookupTable())
+    # vtkResliceImageViewer instances share the same lookup table
+    reslice_image_viewer.SetLookupTable(get_reslice_image_viewer(-1).GetLookupTable())
 
     # (Oblique): Make all vtkResliceImageViewer instance share the same
-    reslice_image_viewer.SetResliceCursor(viewers[data_id][0].GetResliceCursor())
+    reslice_image_viewer.SetResliceCursor(get_reslice_image_viewer(-1).GetResliceCursor())
     for i in range(3):
         cursor_rep.GetResliceCursorActor() \
             .GetCenterlineProperty(i) \
@@ -196,31 +207,8 @@ def render_volume_in_slice(data_id, image_data, renderer, axis=2, obliques=True)
         .SetTranslation(
             vtkCommand.LeftButtonPressEvent, vtkWidgetEvent.Rotate
         )
-    # Update all views on events
-    reslice_cursor_widget.AddObserver('AnyEvent', viewer_callback)
-    reslice_image_viewer.AddObserver('AnyEvent', viewer_callback)
-    reslice_image_viewer.GetInteractorStyle().AddObserver(
-        'WindowLevelEvent',
-        viewer_callback
-    )
-
     # Oblique
     reslice_image_viewer.SetResliceModeToOblique()
-    reslice_cursor_widget.AddObserver(
-        'ResliceAxesChangedEvent', viewer_callback
-    )
-    reslice_cursor_widget.AddObserver(
-        'WindowLevelEvent', viewer_callback
-    )
-    reslice_cursor_widget.AddObserver(
-        'ResliceThicknessChangedEvent', viewer_callback
-    )
-    reslice_cursor_widget.AddObserver(
-        'ResetCursorEvent', viewer_callback
-    )
-    reslice_image_viewer.AddObserver(
-        'SliceChangedEvent', viewer_callback
-    )
 
     if not obliques:
         set_oblique_visibility(reslice_image_viewer, obliques)
@@ -231,9 +219,45 @@ def render_volume_in_slice(data_id, image_data, renderer, axis=2, obliques=True)
     return reslice_image_viewer
 
 
-def render_mesh_in_slice(data_id, poly_data, renderer):
+def render_volume_as_overlay_in_slice(image_data, renderer, axis=2, opacity=0.8):
+    reslice_image_viewer = get_reslice_image_viewer(axis)
+    reslice_cursor = get_reslice_cursor(reslice_image_viewer)
+
+    imageMapper = vtkImageResliceMapper()
+    imageMapper.SetInputData(image_data)
+    imageMapper.SetSlicePlane(reslice_cursor.GetPlane(axis))
+
+    image_slice = vtkImageSlice()
+    image_slice.SetMapper(imageMapper)
+    slice_property = image_slice.GetProperty()
+    # actor.GetProperty().SetLookupTable(ColorTransferFunction)
+    slice_property.SetInterpolationTypeToNearest()
+    slice_property.SetOpacity(opacity)
+
+    # vtkResliceImageViewer computes the default color window/level.
+    # here we need to do it manually
+    range = image_data.GetScalarRange()
+    slice_property.SetColorWindow(range[1] - range[0])
+    slice_property.SetColorLevel((range[0] + range[1]) / 2.0)
+
+    renderer.AddActor(image_slice)
+
+    # Fit volume to viewport
+    renderer.ResetCameraScreenSpace(0.8)
+
+    return image_slice
+
+
+def render_mesh_in_slice(poly_data, axis, renderer):
+    reslice_image_viewer = get_reslice_image_viewer(axis)
+    reslice_cursor = get_reslice_cursor(reslice_image_viewer)
+
+    cutter = vtkCutter()
+    cutter.SetInputData(poly_data)
+    cutter.SetCutFunction(reslice_cursor.GetPlane(axis))
+
     mapper = vtkPolyDataMapper()
-    mapper.SetInputData(poly_data)
+    mapper.SetInputConnection(cutter.GetOutputPort())
 
     actor = vtkActor()
     actor.SetMapper(mapper)
@@ -303,29 +327,36 @@ def render_mesh_in_3D(poly_data, renderer):
     return actor
 
 
-def create_rendering_pipeline(n_views):
-    renderers, render_windows, interactors = [], [], []
-    for _ in range(n_views):
-        renderer = vtkRenderer()
-        render_window = vtkRenderWindow()
-        interactor = vtkRenderWindowInteractor()
-
-        render_window.AddRenderer(renderer)
-        interactor.SetRenderWindow(render_window)
-        interactor.GetInteractorStyle().SetCurrentStyleToTrackballCamera()
-
-        renderer.ResetCamera()
-        render_window.Render()
-        interactor.Render()
-
-        renderers.append(renderer)
-        render_windows.append(render_window)
-        interactors.append(interactor)
-
-    return renderers, render_windows, interactors
+def remove_prop(renderer, prop):
+    if isinstance(prop, vtkVolume):
+        renderer.RemoveVolume(prop)
+    elif isinstance(prop, vtkActor) or isinstance(prop, vtkImageSlice):
+        renderer.RemoveActor(prop)
+    elif isinstance(prop, vtkResliceImageViewer):
+        prop.SetupInteractor(None)
+        # FIXME: check for leak
+        # prop.SetRenderer(None)
+        # prop.SetRenderWindow(None)
+    else:
+        raise Exception(f"Can't remove prop {prop}")
 
 
-def load_file(file_path):
+def create_rendering_pipeline():
+    renderer = vtkRenderer()
+    render_window = vtkRenderWindow()
+    render_window.ShowWindowOff()
+    interactor = vtkRenderWindowInteractor()
+
+    render_window.AddRenderer(renderer)
+    interactor.SetRenderWindow(render_window)
+    interactor.GetInteractorStyle().SetCurrentStyleToTrackballCamera()
+
+    renderer.ResetCamera()
+
+    return renderer, render_window, interactor
+
+
+def load_volume(file_path):
     """Read a file and return a vtkImageData object"""
     logger.debug(f"Loading volume {file_path}")
     if file_path.endswith((".nii", ".nii.gz")):
@@ -360,6 +391,20 @@ def load_mesh(file_path):
         reader = vtkSTLReader()
         reader.SetFileName(file_path)
         reader.Update()
-        return reader.GetOutput()
+
+        matrix = vtkMatrix4x4()
+        matrix.SetElement(0, 0, -1)
+        matrix.SetElement(1, 1, -1)
+
+        transform = vtkTransform()
+        transform.SetMatrix(matrix)
+        transform.Inverse()
+
+        transform_filter = vtkTransformFilter()
+        transform_filter.SetInputConnection(reader.GetOutputPort())
+        transform_filter.SetTransform(transform)
+        transform_filter.Update()
+
+        return transform_filter.GetOutput()
 
     raise Exception("File format is not handled for {}".format(file_path))

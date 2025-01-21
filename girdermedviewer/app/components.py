@@ -2,6 +2,9 @@ import asyncio
 from math import floor
 import logging
 import sys
+import traceback
+from time import time
+
 from collections import defaultdict
 from enum import Enum
 from time import time
@@ -19,16 +22,19 @@ from .vtk_utils import (
     create_rendering_pipeline,
     get_reslice_center,
     get_reslice_normals,
-    load_file,
     load_mesh,
+    load_volume,
+    remove_prop,
     render_mesh_in_3D,
     render_mesh_in_slice,
+    render_volume_as_overlay_in_slice,
     render_volume_in_3D,
     render_volume_in_slice,
     reset_reslice,
     reset_3D,
     set_oblique_visibility,
-    set_reslice_center
+    set_reslice_center,
+    set_window_level
 )
 from girder_client import GirderClient
 
@@ -38,11 +44,6 @@ logger.setLevel(logging.DEBUG)
 
 server = get_server(client_type="vue2")
 state, ctrl = server.state, server.controller
-
-
-@debounce(0.3)
-def debounced_flush():
-    state.flush()
 
 
 class GirderDrawer(VContainer):
@@ -145,10 +146,6 @@ class GirderFileSelector(gwc.GirderFileManager):
 
     def select_item(self, item):
         assert item.get('_modelType') == 'item', "Only item can be selected"
-        is_mesh = item.get('name', '').endswith('.stl')
-        # only 1 volume at a time for now
-        if not is_mesh:
-            self.unselect_items()
 
         state.displayed = state.displayed + [item]
 
@@ -184,8 +181,8 @@ class GirderFileSelector(gwc.GirderFileManager):
                 )
             with self.file_downloader.download_file(files[0]) as file_path:
                 self.quad_view.load_files(file_path, item["_id"])
-        except Exception as e:
-            logger.error(f"Error loading file {item['_id']}: {e}")
+        except Exception:
+            logger.error(f"Error loading file {item['_id']}: {traceback.format_exc()}")
             self.unselect_item(item)
 
     def set_api_url(self, api_url, **kwargs):
@@ -305,31 +302,29 @@ class ViewGutter(html.Div):
 class VtkView(vtk.VtkRemoteView):
     """ Base class for VTK views """
     def __init__(self, **kwargs):
-        renderers, render_windows, interactors = create_rendering_pipeline(1)
-        super().__init__(render_windows[0], **kwargs)
-        self.renderer = renderers[0]
-        self.render_window = render_windows[0]
-        self.interactor = interactors[0]
+        renderer, render_window, interactor = create_rendering_pipeline()
+        super().__init__(render_window, interactive_quality=80, **kwargs)
+        self.renderer = renderer
+        self.render_window = render_window
+        self.interactor = interactor
         self.data = defaultdict(list)
         ctrl.view_update.add(self.update)
+
+    def get_data_id(self, data):
+        return next((key for key, value in self.data.items() if data in value), None)
 
     def register_data(self, data_id, data):
         # Associate data (typically an actor) to data_id so that it can be
         # removed when data_id is unregistered.
         self.data[data_id].append(data)
 
-    def unregister_data(self, data_id, no_render=False):
-        for data in self.data[data_id]:
-            if data.IsA("vtkVolume"):
-                self.renderer.RemoveVolume(data)
-            elif data.IsA("vtkActor"):
-                self.renderer.RemoveActor(data)
-            elif data.IsA("vtkImageViewer2"):
-                data.SetupInteractor(None)
-                # FIXME: check for leak
-                # data.SetRenderer(None)
-                # data.SetRenderWindow(None)
-        self.data.pop(data_id)
+    def unregister_data(self, data_id, no_render=False, only_data=None):
+        for data in list(self.data[data_id]):
+            if only_data is None or data == only_data:
+                remove_prop(self.renderer, data)
+                self.data[data_id].remove(data)
+        if len(self.data[data_id]) == 0:
+            self.data.pop(data_id)
         if not no_render:
             self.update()
 
@@ -348,17 +343,64 @@ class Orientation(Enum):
 
 
 class SliceView(VtkView):
-    """ Display volume as a 2D slice along a given axis """
+    """ Display volume as a 2D slice along a given axis/orientation """
+    ctrl.debounced_flush = debounce(0.3)(state.flush)
+
     def __init__(self, orientation, **kwargs):
         super().__init__(classes=f"slice {orientation.name.lower()}", **kwargs)
         self.orientation = orientation
         self._build_ui()
 
         state.change("position")(self.set_position)
+        state.change("window_level")(self.set_window_level)
+        ctrl.update_other_slice_views.add(self.update_from_other)
+        ctrl.debounced_end_interaction.add(debounce(0.3)(self.end_interaction))
 
-    def add_volume(self, image_data, data_id=None):
+    def unregister_data(self, data_id, no_render=False, only_data=None):
+        super().unregister_data(data_id, no_render=True, only_data=None)
+        # we can't have secondary volumes without at least a primary volume
+        if self.has_primary_volume() is False and self.has_secondary_volume():
+            image_slice = self.get_image_slices()[0]
+            secondary_data_id = self.get_data_id(image_slice)
+            # Replace the secondary volume into a primary volume
+            self.add_primary_volume(image_slice.GetMapper().GetDataSetInput(), secondary_data_id)
+            super().unregister_data(secondary_data_id, True, only_data=image_slice)
+        if not no_render:
+            self.update()
+
+    def get_reslice_image_viewers(self):
+        return [obj for objs in self.data.values() for obj in objs if obj.IsA('vtkResliceImageViewer')]
+
+    def get_image_slices(self):
+        return [obj for objs in self.data.values() for obj in objs if obj.IsA('vtkImageSlice')]
+
+    def update_from_other(self, other, interaction):
+        """
+        Rendering of the view being interacted with is already taken
+        cared of automatically by the client side.
+        Because interacting with the reslice cursor impacts the
+        the other slice views, they must be updated client-side
+        :param interaction True for StartInteraction or Interaction,
+        False for EndInteraction, None for regular update.
+        :type interaction bool or None
+        """
+        if self == other:
+            return
+        if interaction is True:
+            # start_animation() no-op if already in animation
+            # render with less quality than the currently interacted view 
+            self.start_animation(fps=15, quality=int(self.interactive_quality / 3))
+            self.update()
+        elif interaction is False:
+            self.stop_animation()  # does a high quality render
+        else:  # interaction is None
+            self.update()
+
+    def end_interaction(self):
+        self.update_from_other(None, False)
+
+    def add_primary_volume(self, image_data, data_id=None):
         reslice_image_viewer = render_volume_in_slice(
-            data_id,
             image_data,
             self.renderer,
             self.orientation.value,
@@ -370,15 +412,39 @@ class SliceView(VtkView):
         reslice_image_viewer.AddObserver(
             'InteractionEvent', self.on_slice_scroll)
         reslice_cursor_widget.AddObserver(
-            'InteractionEvent', self.on_reslice_axes_interaction)
+            'InteractionEvent', self.on_reslice_cursor_interaction)
         reslice_cursor_widget.AddObserver(
-            'EndInteractionEvent', self.on_reslice_axes_end_interaction)
+            'EndInteractionEvent', self.on_reslice_cursor_end_interaction)
+        reslice_image_viewer.GetInteractorStyle().AddObserver(
+            'WindowLevelEvent', self.on_window_leveling)
+
         self.update()
+
+    def add_secondary_volume(self, image_data, data_id=None):
+        actor = render_volume_as_overlay_in_slice(
+            image_data,
+            self.renderer,
+            self.orientation.value
+        )
+        self.register_data(data_id, actor)
+        self.update()
+
+    def has_primary_volume(self):
+        return len(self.get_reslice_image_viewers()) > 0
+
+    def has_secondary_volume(self):
+        return len(self.get_image_slices()) > 0
+
+    def add_volume(self, image_data, data_id=None):
+        if self.has_primary_volume() is False:
+            self.add_primary_volume(image_data, data_id)
+        else:
+            self.add_secondary_volume(image_data, data_id)
 
     def add_mesh(self, poly_data, data_id=None):
         actor = render_mesh_in_slice(
-            data_id,
             poly_data,
+            self.orientation.value,
             self.renderer
         )
         self.register_data(data_id, actor)
@@ -397,12 +463,18 @@ class SliceView(VtkView):
     def on_slice_scroll(self, reslice_image_viewer, event):
         """
         Triggered when scrolling the current image.
-        Because it is called within a co-routine, position is not flushed right away.
+        It is the first way to modify the reslice cursor
+        :see-also on_reslice_cursor_interaction
         """
+        # Because it is called within a co-routine, position is not
+        # flushed right away.
         state.position = get_reslice_center(reslice_image_viewer)
-        debounced_flush()
+        ctrl.debounced_flush()
 
-    def on_reslice_axes_interaction(self, reslice_image_widget, event):
+        ctrl.update_other_slice_views(self, interaction=True)
+        ctrl.debounced_end_interaction()
+
+    def on_reslice_cursor_interaction(self, reslice_image_widget, event):
         """
         Triggered when interacting with oblique lines.
         Because it is called within a co-routine, position is not flushed right away.
@@ -410,16 +482,38 @@ class SliceView(VtkView):
         state.position = get_reslice_center(reslice_image_widget)
         state.normals = get_reslice_normals(reslice_image_widget)
 
-    def on_reslice_axes_end_interaction(self, reslice_image_widget, event):
-        state.flush()
+        ctrl.update_other_slice_views(self, interaction=True)
+
+    def on_reslice_cursor_end_interaction(self, reslice_image_widget, event):
+        state.flush()  # flush state.position
+        ctrl.update_other_slice_views(self, interaction=False)
+
+    def on_window_leveling(self, interactor_style, event):
+        # Because it is called within a co-routine, window_level is not
+        # flushed right away.
+        state.window_level = (
+            interactor_style.GetCurrentImageProperty().GetColorWindow(),
+            interactor_style.GetCurrentImageProperty().GetColorLevel())
+        ctrl.debounced_flush()
+
+        ctrl.update_other_slice_views(self, interaction=True)
+        ctrl.debounced_end_interaction()
 
     def set_position(self, position, **kwargs):
         logger.debug(f"set_position: {position}")
+        modified = False
         for reslice_image_viewer in self.get_reslice_image_viewers():
-            set_reslice_center(reslice_image_viewer, position)
+            modified = set_reslice_center(reslice_image_viewer, position) or modified
+        if modified:
+            self.update()
 
-    def get_reslice_image_viewers(self):
-        return [obj for objs in self.data.values() for obj in objs if obj.IsA('vtkResliceImageViewer')]
+    def set_window_level(self, window_level, **kwargs):
+        logger.debug(f"set_window_level: {window_level}")
+        modified = False
+        for reslice_image_viewer in self.get_reslice_image_viewers():
+            modified = set_window_level(reslice_image_viewer, window_level) or modified
+        if modified:
+            self.update()
 
     def _build_ui(self):
         with self:
@@ -463,14 +557,19 @@ class QuadView(VContainer):
             fluid=True,
             **kwargs
         )
-        self.twod_views = []
-        self.threed_views = []
         self.views = []
         state.fullscreen = None
         self._build_ui()
-
         ctrl.reset = self.reset
         state.change("obliques_visibility")(self.set_obliques_visibility)
+
+    @property
+    def twod_views(self):
+        return [view for view in self.views if isinstance(view, SliceView)]
+
+    @property
+    def threed_views(self):
+        return [view for view in self.views if isinstance(view, ThreeDView)]
 
     def remove_data(self, data_id=None):
         for view in self.views:
@@ -499,7 +598,7 @@ class QuadView(VContainer):
             for view in self.views:
                 view.add_mesh(poly_data, data_id)
         else:
-            image_data = load_file(file_path)
+            image_data = load_volume(file_path)
             for view in self.views:
                 view.add_volume(image_data, data_id)
 
@@ -520,17 +619,13 @@ class QuadView(VContainer):
                 with SliceView(Orientation.SAGITTAL,
                                id="sag_view",
                                v_if="fullscreen == null || fullscreen == 'sag_view'") as sag_view:
-                    self.twod_views.append(sag_view)
                     self.views.append(sag_view)
                 with ThreeDView(id="threed_view",
                                 v_if="fullscreen == null || fullscreen == 'threed_view'") as threed_view:
-                    self.threed_views.append(threed_view)
                     self.views.append(threed_view)
                 with SliceView(Orientation.CORONAL, id="cor_view",
                                v_if="fullscreen == null || fullscreen == 'cor_view'") as cor_view:
-                    self.twod_views.append(cor_view)
                     self.views.append(cor_view)
                 with SliceView(Orientation.AXIAL, id="ax_view",
                                v_if="fullscreen == null || fullscreen == 'ax_view'") as ax_view:
-                    self.twod_views.append(ax_view)
                     self.views.append(ax_view)

@@ -4,26 +4,40 @@ from functools import wraps
 
 def debounce(wait):
     """
-    Debounce decorator to delay the execution of a function.
+    Debounce decorator to delay the execution of a function or method.
     If the function is called again before the wait time is over, the timer resets.
-    
-    :param wait: Time to wait (in seconds) before executing the function.
+
+    :param wait: Time to wait (in seconds) before executing the function or method.
     """
     def decorator(func):
-        func._debounce_task = None
+        _debounce_tasks = {}
 
         @wraps(func)
         def wrapper(*args, **kwargs):
-            if func._debounce_task:
-                func._debounce_task.cancel()
-            func._debounce_task = asyncio.create_task(delayed_execution(func, wait, *args, **kwargs))
+            # Determine the key to store the debounce task:
+            # For instance or class methods, use the instance/class as the key
+            # For standalone functions, use the function itself as the key
+            if len(args) > 0 and hasattr(args[0], "__dict__"):  # Likely a method
+                key = (args[0], func)  # Use (instance, func) as the unique key
+            else:  # Standalone function
+                key = func
 
-        async def delayed_execution(func, wait, *args, **kwargs):
-            try:
-                await asyncio.sleep(wait)
-                await func(*args, **kwargs)
-            except asyncio.CancelledError:
-                pass  # Task was canceled
+            # Cancel the existing task if it exists
+            if key in _debounce_tasks:
+                _debounce_tasks[key].cancel()
+
+            # Define the delayed execution task
+            async def delayed_execution():
+                try:
+                    await asyncio.sleep(wait)
+                    func(*args, **kwargs)
+                except asyncio.CancelledError:
+                    pass  # Task was canceled
+                except Exception as e:
+                    print(e)
+
+            # Create and store the new task
+            _debounce_tasks[key] = asyncio.create_task(delayed_execution())
 
         return wrapper
 
