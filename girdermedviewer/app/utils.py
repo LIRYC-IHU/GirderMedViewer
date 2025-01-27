@@ -39,12 +39,13 @@ class Button():
                     VIcon(icon, size=floor(0.6 * size), color=icon_color)
 
 
-def debounce(wait):
+def debounce(wait, disabled=False):
     """
     Debounce decorator to delay the execution of a function or method.
     If the function is called again before the wait time is over, the timer resets.
 
     :param wait: Time to wait (in seconds) before executing the function or method.
+    :param disabled: debouncing can be disabled at declaration time
     """
     def decorator(func):
         _debounce_tasks = {}
@@ -78,4 +79,7 @@ def debounce(wait):
 
         return wrapper
 
-    return decorator
+    if disabled:
+        return lambda func: func
+    else:
+        return decorator
