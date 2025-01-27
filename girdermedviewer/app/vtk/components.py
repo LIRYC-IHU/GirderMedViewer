@@ -32,9 +32,6 @@ logging.basicConfig(stream=sys.stdout)
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
-server = get_server(client_type="vue2")
-state, ctrl = server.state, server.controller
-
 
 class ToolsStrip(html.Div):
     def __init__(self, **kwargs):
@@ -56,7 +53,7 @@ class ToolsStrip(html.Div):
             Button(
                 tooltip="Reset Views",
                 icon="mdi-camera-flip-outline",
-                click=ctrl.reset,
+                click=self.ctrl.reset,
                 disabled=("displayed.length === 0 || file_loading_busy",)
             )
 
@@ -90,7 +87,7 @@ class ViewGutter(html.Div):
                 )
 
     def toggle_fullscreen(self):
-        state.fullscreen = None if state.fullscreen else self.view.id
+        self.state.fullscreen = None if self.state.fullscreen else self.view.id
 
 
 class VtkView(vtk.VtkRemoteView):
@@ -102,7 +99,7 @@ class VtkView(vtk.VtkRemoteView):
         self.render_window = render_window
         self.interactor = interactor
         self.data = defaultdict(list)
-        ctrl.view_update.add(self.update)
+        self.ctrl.view_update.add(self.update)
 
     def get_data_id(self, data):
         return next((key for key, value in self.data.items() if data in value), None)
@@ -198,7 +195,7 @@ class SliceView(VtkView):
             image_data,
             self.renderer,
             self.orientation.value,
-            obliques=state.obliques_visibility
+            obliques=self.state.obliques_visibility
         )
         self.register_data(data_id, reslice_image_viewer)
 
@@ -279,13 +276,12 @@ class SliceView(VtkView):
         ctrl.update_other_slice_views(self, interaction=True)
 
     def on_reslice_cursor_end_interaction(self, reslice_image_widget, event):
-        state.flush()  # flush state.position
-        ctrl.update_other_slice_views(self, interaction=False)
+        self.state.flush()  # flush state.position
 
     def on_window_leveling(self, interactor_style, event):
         # Because it is called within a co-routine, window_level is not
         # flushed right away.
-        state.window_level = (
+        self.state.window_level = (
             interactor_style.GetCurrentImageProperty().GetColorWindow(),
             interactor_style.GetCurrentImageProperty().GetColorLevel())
         ctrl.debounced_flush()
@@ -352,10 +348,9 @@ class QuadView(VContainer):
             **kwargs
         )
         self.views = []
-        state.fullscreen = None
+        self.state.fullscreen = None
         self._build_ui()
-        ctrl.reset = self.reset
-        state.change("obliques_visibility")(self.set_obliques_visibility)
+        self.ctrl.reset = self.reset
 
     @property
     def twod_views(self):
@@ -368,7 +363,7 @@ class QuadView(VContainer):
     def remove_data(self, data_id=None):
         for view in self.views:
             view.unregister_data(data_id)
-        ctrl.view_update()
+        self.ctrl.view_update()
 
     def clear(self):
         for view in self.views:
@@ -383,7 +378,7 @@ class QuadView(VContainer):
     def reset(self):
         for view in self.views:
             view.reset()
-        ctrl.view_update()
+        self.ctrl.view_update()
 
     def load_files(self, file_path, data_id=None):
         logger.debug(f"Loading file {file_path}")
@@ -396,7 +391,7 @@ class QuadView(VContainer):
             for view in self.views:
                 view.add_volume(image_data, data_id)
 
-        ctrl.view_update()
+        self.ctrl.view_update()
 
     def _build_ui(self):
         with self:

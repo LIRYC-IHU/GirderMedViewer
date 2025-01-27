@@ -5,7 +5,6 @@ import traceback
 from time import time
 
 from trame_server.utils.asynchronous import create_task
-from trame.app import get_server
 from trame.widgets import gwc
 from trame.widgets.vuetify2 import (VContainer, VRow, VCol,)
 from .utils import FileDownloader, CacheMode
@@ -15,9 +14,6 @@ from girder_client import GirderClient
 logging.basicConfig(stream=sys.stdout)
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
-
-server = get_server(client_type="vue2")
-state, ctrl = server.state, server.controller
 
 
 class GirderDrawer(VContainer):
@@ -59,12 +55,11 @@ class GirderDrawer(VContainer):
 
     def clear_views(self):
         self.quad_view.clear()
-        state.displayed = []
+        self.state.displayed = []
 
 
 class GirderFileSelector(gwc.GirderFileManager):
     def __init__(self, quad_view, **kwargs):
-        state.selected_in_location = []
         super().__init__(
             v_if=("user",),
             v_model=("selected_in_location",),
@@ -76,27 +71,28 @@ class GirderFileSelector(gwc.GirderFileManager):
             ),
             **kwargs
         )
+        self.state.selected_in_location = []
         self.quad_view = quad_view
-        girder_client = GirderClient(apiUrl=state.api_url)
-        cache_mode = CacheMode(state.cache_mode) if state.cache_mode else CacheMode.No
-        self.file_downloader = FileDownloader(girder_client, state.temp_dir, cache_mode)
+        girder_client = GirderClient(apiUrl=self.state.api_url)
+        cache_mode = CacheMode(self.state.cache_mode) if self.state.cache_mode else CacheMode.No
+        self.file_downloader = FileDownloader(girder_client, self.state.temp_dir, cache_mode)
         # FIXME do not use global variable
         global file_selector
         file_selector = self
 
-        state.change("location", "displayed")(self.on_location_changed)
-        state.change("api_url")(self.set_api_url)
-        state.change("user")(self.set_user)
+        self.state.change("location", "displayed")(self.on_location_changed)
+        self.state.change("api_url")(self.set_api_url)
+        self.state.change("user")(self.set_user)
 
     def toggle_item(self, item):
         if item.get('_modelType') != 'item':
             return
         # Ignore double click on item
         clicked_time = time()
-        if clicked_time - state.last_clicked < 1:
+        if clicked_time - self.state.last_clicked < 1:
             return
-        state.last_clicked = clicked_time
-        is_selected = item in state.displayed
+        self.state.last_clicked = clicked_time
+        is_selected = item in self.state.displayed
         logger.debug(f"Toggle item {item} selected={is_selected}")
         if is_selected:
             self.unselect_item(item)
@@ -108,35 +104,35 @@ class GirderFileSelector(gwc.GirderFileManager):
         Called each time the user browse through the GirderFileManager.
         """
         logger.debug(f"Updating location to {new_location}")
-        state.location = new_location
+        self.state.location = new_location
 
     def unselect_item(self, item):
-        state.displayed = [i for i in state.displayed if i != item]
+        self.state.displayed = [i for i in self.state.displayed if i != item]
         self.quad_view.remove_data(item["_id"])
 
     def unselect_items(self):
-        while len(state.displayed) > 0:
-            self.unselect_item(state.displayed[0])
+        while len(self.state.displayed) > 0:
+            self.unselect_item(self.state.displayed[0])
 
     def select_item(self, item):
         assert item.get('_modelType') == 'item', "Only item can be selected"
 
-        state.displayed = state.displayed + [item]
+        self.state.displayed = self.state.displayed + [item]
 
         self.create_load_task(item)
 
     def create_load_task(self, item):
         logger.debug(f"Creating load task for {item}")
-        state.file_loading_busy = True
-        state.flush()
+        self.state.file_loading_busy = True
+        self.state.flush()
 
         async def load():
             await asyncio.sleep(1)
             try:
                 self.load_item(item)
             finally:
-                state.file_loading_busy = False
-                state.flush()
+                self.state.file_loading_busy = False
+                self.state.flush()
 
         create_task(load())
 
@@ -167,18 +163,18 @@ class GirderFileSelector(gwc.GirderFileManager):
         self.file_downloader.girder_client.setToken(token)
 
     def on_location_changed(self, **kwargs):
-        logger.debug(f"Location/Displayed changed to {state.location}/{state.displayed}")
-        location_id = state.location.get("_id", "") if state.location else ""
-        state.selected_in_location = [item for item in state.displayed
-                                      if item["folderId"] == location_id]
-        state.detailed = state.selected_in_location if state.selected_in_location else [state.location]
+        logger.debug(f"Location/Displayed changed to {self.state.location}/{self.state.displayed}")
+        location_id = self.state.location.get("_id", "") if self.state.location else ""
+        self.state.selected_in_location = [item for item in self.state.displayed
+                                           if item["folderId"] == location_id]
+        self.state.detailed = self.state.selected_in_location if self.state.selected_in_location else [self.state.location]
 
     def set_user(self, user, **kwargs):
         logger.debug(f"Setting user to {user}")
         if user:
-            state.location = state.default_location or user
-            self.set_token(state.token)
+            self.state.location = self.state.default_location or user
+            self.set_token(self.state.token)
         else:
             self.unselect_items()
-            state.location = None
+            self.state.location = None
             self.set_token(None)
