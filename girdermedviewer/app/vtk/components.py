@@ -2,17 +2,20 @@ import logging
 import sys
 
 from collections import defaultdict
+from dataclasses import dataclass
 from enum import Enum
-
 
 from trame.app import get_server
 from trame.widgets import html, vtk, client
-from trame.widgets.vuetify2 import (VContainer, VCheckbox)
+from trame.widgets.vuetify2 import (VContainer, VCheckbox, VSlider)
 from ..utils import debounce, Button
 from .utils import (
     create_rendering_pipeline,
+    get_number_of_slices,
+    get_position_from_slice_index,
     get_reslice_center,
     get_reslice_normals,
+    get_slice_index_from_position,
     load_mesh,
     load_volume,
     remove_prop,
@@ -25,15 +28,13 @@ from .utils import (
     reset_3D,
     set_oblique_visibility,
     set_reslice_center,
+    set_reslice_normal,
     set_window_level
 )
 
 logging.basicConfig(stream=sys.stdout)
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
-
-server = get_server(client_type="vue2")
-state, ctrl = server.state, server.controller
 
 
 class ToolsStrip(html.Div):
@@ -46,7 +47,7 @@ class ToolsStrip(html.Div):
 
         with self:
             VCheckbox(
-                v_model=("obliques_visibility",),
+                v_model=("obliques_visibility", True),
                 off_icon='mdi-eye-outline',
                 on_icon='mdi-eye-remove-outline',
                 color="black",
@@ -56,12 +57,22 @@ class ToolsStrip(html.Div):
             Button(
                 tooltip="Reset Views",
                 icon="mdi-camera-flip-outline",
-                click=ctrl.reset,
+                click=self.ctrl.reset,
                 disabled=("displayed.length === 0 || file_loading_busy",)
             )
 
 
+@dataclass
+class SliderStateId:
+    value_id: str
+    min_id: str
+    max_id: str
+    step_id: str
+
+
 class ViewGutter(html.Div):
+    DEBOUNCED_SLIDER_UPDATE = True
+
     def __init__(self, view, **kwargs):
         super().__init__(
             classes="gutter",
@@ -88,9 +99,50 @@ class ViewGutter(html.Div):
                     icon_color="white",
                     click=self.toggle_fullscreen,
                 )
+                if isinstance(view, SliceView):
+                    slider_id = SliderStateId(
+                        value_id=f"slider_value_{view.id}",
+                        min_id=f"slider_min_{view.id}",
+                        max_id=f"slider_max_{view.id}",
+                        step_id=f"slider_step_{view.id}",
+                    )
+
+                    def _on_slice_view_modified(**kwargs):
+                        with self.state as state:
+                            # logger.debug(f'on cursor {view.id} changed {view.get_slice_range()}: {view.get_slice()} {view.get_slice_range()} {state.position}')
+                            range = view.get_slice_range()
+                            state.update({
+                                slider_id.min_id: range[0],
+                                slider_id.max_id: range[1],
+                                slider_id.step_id: 1,  # _view.get_slice_step()
+                                slider_id.value_id: view.get_slice()
+                            })
+
+                    self.state.change("position", "normals")(
+                        debounce(0.3, not ViewGutter.DEBOUNCED_SLIDER_UPDATE)(
+                            _on_slice_view_modified))
+
+                    VSlider(
+                        classes="slice-slider",
+                        hide_details=True,
+                        vertical=True,
+                        theme="dark",
+                        dense=True,
+                        height="100%",
+                        v_model=(slider_id.value_id, view.get_slice()),
+                        min=(slider_id.min_id, view.get_slice_range()[0]),
+                        max=(slider_id.max_id, view.get_slice_range()[1]),
+                        step=(slider_id.step_id, 1),
+                        input=(view.set_slice, f"[{slider_id.value_id}]"),
+                        # to lower the framerate when animating the slider
+                        start=self.ctrl.start_animation,
+                        end=self.ctrl.stop_animation,
+                        # needed to prevent None triggers
+                        v_if=(f'{slider_id.value_id} != null',)
+                    )
 
     def toggle_fullscreen(self):
-        state.fullscreen = None if state.fullscreen else self.view.id
+        self.state.fullscreen = None if self.state.fullscreen else self.view.id
 
 
 class VtkView(vtk.VtkRemoteView):
@@ -102,7 +154,7 @@ class VtkView(vtk.VtkRemoteView):
         self.render_window = render_window
         self.interactor = interactor
         self.data = defaultdict(list)
-        ctrl.view_update.add(self.update)
+        self.ctrl.view_update.add(self.update)
 
     def get_data_id(self, data):
         return next((key for key, value in self.data.items() if data in value), None)
@@ -138,17 +190,28 @@ class Orientation(Enum):
 
 class SliceView(VtkView):
     """ Display volume as a 2D slice along a given axis/orientation """
-    ctrl.debounced_flush = debounce(0.3)(state.flush)
+    _debounced_flush_initialized = False
+    DEBOUNCED_FLUSH = False
 
     def __init__(self, orientation, **kwargs):
         super().__init__(classes=f"slice {orientation.name.lower()}", **kwargs)
         self.orientation = orientation
+        if SliceView.DEBOUNCED_FLUSH and SliceView._debounced_flush_initialized is False:  # can't use hasattr here
+            SliceView._debounced_flush_initialized = True
+            self.server.controller.debounced_flush = debounce(0.3)(self.state.flush)
+
         self._build_ui()
 
-        state.change("position")(self.set_position)
-        state.change("window_level")(self.set_window_level)
-        ctrl.update_other_slice_views.add(self.update_from_other)
-        ctrl.debounced_end_interaction.add(debounce(0.3)(self.end_interaction))
+        self.state.change("position", "normals")(self.on_cursor_changed)
+        self.state.change("window_level")(self.on_window_level_changed)
+        self.state.change("obliques_visibility")(self.on_obliques_visibility_changed)
+
+        # in addition to self.ctrl.view_update for any view:
+        self.ctrl.slice_view_update.add(self.update)
+        # If a view is in animation, the other views must also be in animation to
+        # be rendered
+        self.ctrl.start_animation.add(self.start_animation)
+        self.ctrl.stop_animation.add(self.stop_animation)
 
     def unregister_data(self, data_id, no_render=False, only_data=None):
         super().unregister_data(data_id, no_render=True, only_data=None)
@@ -162,43 +225,26 @@ class SliceView(VtkView):
         if not no_render:
             self.update()
 
-    def get_reslice_image_viewers(self):
-        return [obj for objs in self.data.values() for obj in objs if obj.IsA('vtkResliceImageViewer')]
+    def flush(self):
+        if SliceView.DEBOUNCED_FLUSH:
+            self.ctrl.debounced_flush()
+        else:
+            self.state.flush()
+
+    def get_reslice_image_viewer(self):
+        viewers = [obj for objs in self.data.values() for obj in objs if obj.IsA('vtkResliceImageViewer')]
+        assert len(viewers) <= 1
+        return viewers[0] if len(viewers) else None
 
     def get_image_slices(self):
         return [obj for objs in self.data.values() for obj in objs if obj.IsA('vtkImageSlice')]
-
-    def update_from_other(self, other, interaction):
-        """
-        Rendering of the view being interacted with is already taken
-        cared of automatically by the client side.
-        Because interacting with the reslice cursor impacts the
-        the other slice views, they must be updated client-side
-        :param interaction True for StartInteraction or Interaction,
-        False for EndInteraction, None for regular update.
-        :type interaction bool or None
-        """
-        if self == other:
-            return
-        if interaction is True:
-            # start_animation() no-op if already in animation
-            # render with less quality than the currently interacted view 
-            self.start_animation(fps=15, quality=int(self.interactive_quality / 3))
-            self.update()
-        elif interaction is False:
-            self.stop_animation()  # does a high quality render
-        else:  # interaction is None
-            self.update()
-
-    def end_interaction(self):
-        self.update_from_other(None, False)
 
     def add_primary_volume(self, image_data, data_id=None):
         reslice_image_viewer = render_volume_in_slice(
             image_data,
             self.renderer,
             self.orientation.value,
-            obliques=state.obliques_visibility
+            obliques=self.state.obliques_visibility
         )
         self.register_data(data_id, reslice_image_viewer)
 
@@ -224,7 +270,7 @@ class SliceView(VtkView):
         self.update()
 
     def has_primary_volume(self):
-        return len(self.get_reslice_image_viewers()) > 0
+        return self.get_reslice_image_viewer() is not None
 
     def has_secondary_volume(self):
         return len(self.get_image_slices()) > 0
@@ -232,6 +278,8 @@ class SliceView(VtkView):
     def add_volume(self, image_data, data_id=None):
         if self.has_primary_volume() is False:
             self.add_primary_volume(image_data, data_id)
+            self.on_reslice_cursor_interaction(
+                self.get_reslice_image_viewer(), None)
         else:
             self.add_secondary_volume(image_data, data_id)
 
@@ -245,69 +293,85 @@ class SliceView(VtkView):
         self.update()
 
     def reset(self):
-        for reslice_image_viewer in self.get_reslice_image_viewers():
+        reslice_image_viewer = self.get_reslice_image_viewer()
+        if reslice_image_viewer is not None:
             reset_reslice(reslice_image_viewer)
-        self.update()
+            self.update()
 
-    def set_obliques_visibility(self, visible):
-        for reslice_image_viewer in self.get_reslice_image_viewers():
-            set_oblique_visibility(reslice_image_viewer, visible)
-        self.update()
+    def on_obliques_visibility_changed(self, obliques_visibility, **kwargs):
+        reslice_image_viewer = self.get_reslice_image_viewer()
+        if reslice_image_viewer is not None:
+            set_oblique_visibility(reslice_image_viewer, obliques_visibility)
+            self.update()
 
     def on_slice_scroll(self, reslice_image_viewer, event):
         """
         Triggered when scrolling the current image.
-        It is the first way to modify the reslice cursor
+        There are 2 possible user interactions to modify the cursor:
+         - scroll
+         - cursor interaction
+
         :see-also on_reslice_cursor_interaction
         """
+        new_position = get_reslice_center(reslice_image_viewer)
+        if self.state.position != new_position:
+            self.state.position = new_position
         # Because it is called within a co-routine, position is not
         # flushed right away.
-        state.position = get_reslice_center(reslice_image_viewer)
-        ctrl.debounced_flush()
-
-        ctrl.update_other_slice_views(self, interaction=True)
-        ctrl.debounced_end_interaction()
+        self.flush()
 
     def on_reslice_cursor_interaction(self, reslice_image_widget, event):
         """
         Triggered when interacting with oblique lines.
         Because it is called within a co-routine, position is not flushed right away.
-        """
-        state.position = get_reslice_center(reslice_image_widget)
-        state.normals = get_reslice_normals(reslice_image_widget)
 
-        ctrl.update_other_slice_views(self, interaction=True)
+        There are 2 possible user interactions to modify the cursor:
+         - scroll
+         - cursor interaction
+        :see-also on_slice_scroll
+        """
+        self.state.update({
+            'position': get_reslice_center(reslice_image_widget),
+            'normals': get_reslice_normals(reslice_image_widget),
+        })
+        # Flushing will trigger rendering
+        self.flush()
 
     def on_reslice_cursor_end_interaction(self, reslice_image_widget, event):
-        state.flush()  # flush state.position
-        ctrl.update_other_slice_views(self, interaction=False)
+        self.state.flush()  # flush state.position
 
     def on_window_leveling(self, interactor_style, event):
         # Because it is called within a co-routine, window_level is not
         # flushed right away.
-        state.window_level = (
+        self.state.window_level = (
             interactor_style.GetCurrentImageProperty().GetColorWindow(),
             interactor_style.GetCurrentImageProperty().GetColorLevel())
-        ctrl.debounced_flush()
+        self.flush()
 
-        ctrl.update_other_slice_views(self, interaction=True)
-        ctrl.debounced_end_interaction()
+    def on_cursor_changed(self, position, normals, **kwargs):
+        set_reslice_center(self.get_reslice_image_viewer(), position)
+        set_reslice_normal(self.get_reslice_image_viewer(), normals[self.orientation.value], self.orientation.value)
+        self.update()
 
-    def set_position(self, position, **kwargs):
-        logger.debug(f"set_position: {position}")
-        modified = False
-        for reslice_image_viewer in self.get_reslice_image_viewers():
-            modified = set_reslice_center(reslice_image_viewer, position) or modified
-        if modified:
-            self.update()
+    def get_slice_range(self):
+        reslice_image_viewer = self.get_reslice_image_viewer()
+        return [0, get_number_of_slices(reslice_image_viewer, self.orientation.value)]
 
-    def set_window_level(self, window_level, **kwargs):
+    def get_slice(self):
+        reslice_image_viewer = self.get_reslice_image_viewer()
+        return get_slice_index_from_position(self.state.position, reslice_image_viewer, self.orientation.value)
+
+    def set_slice(self, slice):
+        reslice_image_viewer = self.get_reslice_image_viewer()
+        position = get_position_from_slice_index(slice, reslice_image_viewer, self.orientation.value)
+        if position is not None and self.state.position != position:
+            self.state.position = position
+            self.flush()
+
+    def on_window_level_changed(self, window_level, **kwargs):
         logger.debug(f"set_window_level: {window_level}")
-        modified = False
-        for reslice_image_viewer in self.get_reslice_image_viewers():
-            modified = set_window_level(reslice_image_viewer, window_level) or modified
-        if modified:
-            self.update()
+        set_window_level(self.get_reslice_image_viewer(), window_level)
+        self.update()
 
     def _build_ui(self):
         with self:
@@ -352,10 +416,9 @@ class QuadView(VContainer):
             **kwargs
         )
         self.views = []
-        state.fullscreen = None
+        self.state.fullscreen = None
         self._build_ui()
-        ctrl.reset = self.reset
-        state.change("obliques_visibility")(self.set_obliques_visibility)
+        self.ctrl.reset = self.reset
 
     @property
     def twod_views(self):
@@ -368,22 +431,17 @@ class QuadView(VContainer):
     def remove_data(self, data_id=None):
         for view in self.views:
             view.unregister_data(data_id)
-        ctrl.view_update()
+        self.ctrl.view_update()
 
     def clear(self):
         for view in self.views:
             view.unregister_all_data()
-        ctrl.view_update()
-
-    def set_obliques_visibility(self, obliques_visibility, **kwargs):
-        for view in self.twod_views:
-            view.set_obliques_visibility(obliques_visibility)
-        ctrl.view_update()
+        self.ctrl.view_update()
 
     def reset(self):
         for view in self.views:
             view.reset()
-        ctrl.view_update()
+        self.ctrl.view_update()
 
     def load_files(self, file_path, data_id=None):
         logger.debug(f"Loading file {file_path}")
@@ -396,7 +454,7 @@ class QuadView(VContainer):
             for view in self.views:
                 view.add_volume(image_data, data_id)
 
-        ctrl.view_update()
+        self.ctrl.view_update()
 
     def _build_ui(self):
         with self:

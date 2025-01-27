@@ -1,6 +1,6 @@
 import logging
+import math
 import sys
-from collections import defaultdict
 
 from vtkmodules.all import (
     vtkCommand,
@@ -12,18 +12,23 @@ from vtkmodules.all import (
     vtkWidgetEvent
 )
 from vtk import (
+    reference as vtk_reference,
     vtkActor,
     vtkBoundingBox,
+    vtkBox,
     vtkColorTransferFunction,
     vtkCutter,
     vtkImageReslice,
     vtkImageResliceMapper,
     vtkImageSlice,
+    vtkMath,
     vtkMatrix4x4,
     vtkNIFTIImageReader,
     vtkPiecewiseFunction,
     vtkPolyDataMapper,
     vtkResliceCursorLineRepresentation,
+    vtkResliceCursorRepresentation,
+    vtkResliceCursorWidget,
     vtkSmartVolumeMapper,
     vtkSTLReader,
     vtkTransform,
@@ -39,6 +44,7 @@ logger.setLevel(logging.DEBUG)
 # FIXME do not use global variable
 # dict[axis:vtkResliceImageViewer]
 viewers = dict()
+
 
 def set_oblique_visibility(reslice_image_viewer, visible):
     reslice_cursor_widget = reslice_image_viewer.GetResliceCursorWidget()
@@ -58,11 +64,11 @@ def get_reslice_cursor(reslice_object):
     """
     if isinstance(reslice_object, vtkResliceImageViewer):
         reslice_object = reslice_object.GetResliceCursor()
-    if reslice_object.IsA('vtkResliceCursorWidget'):
+    if isinstance(reslice_object, vtkResliceCursorWidget):
         reslice_object = reslice_object.GetResliceCursorRepresentation()
-    if reslice_object.IsA('vtkResliceCursorRepresentation'):
+    if isinstance(reslice_object, vtkResliceCursorRepresentation):
         reslice_object = reslice_object.GetResliceCursor()
-    assert reslice_object.IsA('vtkResliceCursor')
+    assert reslice_object is None or reslice_object.IsA('vtkResliceCursor')
     return reslice_object
 
 
@@ -75,17 +81,31 @@ def get_reslice_center(reslice_object):
 
 
 def set_reslice_center(reslice_object, new_center):
+    if reslice_object is None:
+        return False
     reslice_cursor = get_reslice_cursor(reslice_object)
     center = reslice_cursor.GetCenter()
-    if (
-            center[0] == new_center[0] and center[1] == center[1] and
-            center[2] == new_center[2]):
+    if center == new_center:
         return False
-    get_reslice_cursor(reslice_object).SetCenter(new_center)
+    reslice_cursor.SetCenter(new_center)
+    return True
+
+
+def set_reslice_normal(reslice_object, new_normal, axis):
+    if reslice_object is None:
+        return False
+    reslice_cursor = get_reslice_cursor(reslice_object)
+    axis_name = 'X' if axis == 0 else 'Y' if axis == 1 else 'Z'
+    normal = getattr(reslice_cursor, f"Get{axis_name}Axis")()
+    if normal == new_normal:
+        return False
+    getattr(reslice_cursor, f"Set{axis_name}Axis")(new_normal)
     return True
 
 
 def set_window_level(reslice_image_viewer, new_window_level):
+    if reslice_image_viewer is None:
+        return False
     if (reslice_image_viewer.GetColorWindow() == new_window_level[0] and
             reslice_image_viewer.GetColorLevel() == new_window_level[1]):
         return False
@@ -118,6 +138,74 @@ def get_reslice_normals(reslice_object):
 
 def get_reslice_normal(reslice_image_viewer, axis):
     return get_reslice_normals(reslice_image_viewer)[axis]
+
+
+def get_reslice_range(reslice_image_viewer, axis, center=None):
+    if reslice_image_viewer is None:
+        return None
+    bounds = reslice_image_viewer.GetInput().GetBounds()
+    if center is None:
+        center = get_reslice_center(reslice_image_viewer)
+    normal = list(get_reslice_normal(reslice_image_viewer, axis))
+    vtkMath.MultiplyScalar(normal, 1000000.0)
+    center_plus_normal = [0, 0, 0]
+    vtkMath.Add(center, normal, center_plus_normal)
+    center_minus_normal = [0, 0, 0]
+    vtkMath.Subtract(center, normal, center_minus_normal)
+    t1 = vtk_reference(0)
+    t2 = vtk_reference(0)
+    x1 = [0, 0, 0]
+    x2 = [0, 0, 0]
+    p1 = vtk_reference(0)
+    p2 = vtk_reference(0)
+    vtkBox.IntersectWithInfiniteLine(
+        bounds,
+        center_minus_normal, center_plus_normal,
+        t1, t2, x1, x2, p1, p2)
+    reslice_image_viewer.GetInput().GetSpacing()
+    return x1, x2
+
+
+def get_index(p1, p2, spacing):
+    v = [
+        (p2[0] - p1[0]) / spacing[0],
+        (p2[1] - p1[1]) / spacing[1],
+        (p2[2] - p1[2]) / spacing[2],
+    ]
+    return math.ceil(vtkMath.Norm(v))
+
+
+def get_number_of_slices(reslice_image_viewer, axis):
+    if reslice_image_viewer is None:
+        return 0
+    start, end = get_reslice_range(reslice_image_viewer, axis)
+    spacing = reslice_image_viewer.GetInput().GetSpacing()
+    return get_index(start, end, spacing)
+
+
+def get_slice_index_from_position(position, reslice_image_viewer, axis):
+    """Position must be on the line defined by stard and end."""
+    if reslice_image_viewer is None:
+        return None
+    start, end = get_reslice_range(reslice_image_viewer, axis, position)
+    spacing = reslice_image_viewer.GetInput().GetSpacing()
+    return get_index(start, position, spacing)
+
+
+def get_position_from_slice_index(index, reslice_image_viewer, axis):
+    """Position must be on the line defined by stard and end."""
+    if reslice_image_viewer is None:
+        return None
+    start, end = get_reslice_range(reslice_image_viewer, axis)
+    slice_count = get_number_of_slices(reslice_image_viewer, axis)
+    if slice_count == 0:
+        return None
+    dir = [end[0] - start[0], end[1] - start[1], end[2] - start[2]]
+    return [
+        start[0] + index * dir[0] / slice_count,
+        start[1] + index * dir[1] / slice_count,
+        start[2] + index * dir[2] / slice_count
+    ]
 
 
 def get_reslice_image_viewer(axis=-1):
