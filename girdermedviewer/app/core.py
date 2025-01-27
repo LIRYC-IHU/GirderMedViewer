@@ -2,9 +2,8 @@ import ast
 import os
 from urllib.parse import urljoin
 from configparser import ConfigParser
-
 from trame.app import get_server
-from trame.decorators import TrameApp, change, controller
+from trame.decorators import TrameApp, change
 from trame.widgets import gwc, html
 from trame.ui.vuetify import SinglePageWithDrawerLayout
 from trame.widgets.vuetify2 import (VContainer, VRow, VCol, VBtn, VCard, VIcon)
@@ -31,9 +30,7 @@ class MyTrameApp:
         self.state.obliques_visibility = True
         self.state.main_drawer = False
         self.state.user = None
-        self.state.file_loading_busy = False
-        self.state.displayed = []  # Items loaded and visible in the viewer
-        self.state.detailed = []  # Items for which detailed information is displayed
+        self.state.selected = []  # Items loaded and visible in the viewer
         self.state.last_clicked = 0
         self.state.action_keys = [{"for": []}]
 
@@ -74,6 +71,7 @@ class MyTrameApp:
 
         self.state.temp_dir = config.get("download", "directory", fallback=None)
         self.state.cache_mode = config.get("download", "cache_mode", fallback=None)
+        self.state.date_format = config.get("ui", "date_format", fallback="%Y-%m-%d %H:%M:00")
 
     @change("user")
     def set_user(self, user, **kwargs):
@@ -86,7 +84,7 @@ class MyTrameApp:
         with SinglePageWithDrawerLayout(
             self.server,
             show_drawer=False,
-            width="400px"
+            width="450px"
         ) as layout:
             self.provider.register_layout(layout)
             layout.title.set_text(self.state.app_name)
@@ -142,10 +140,9 @@ class MyTrameApp:
                     classes="fill-height d-flex flex-row flex-grow-1"
                 ):
                     ToolsStrip()
-                    qd = QuadView()
-                    self.quad_view = qd
+                    QuadView()
 
             with layout.drawer:
-                GirderDrawer(self.quad_view)
+                GirderDrawer()
 
             return layout

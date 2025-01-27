@@ -1,14 +1,12 @@
 import logging
 import math
 import sys
-
 from vtkmodules.all import (
     vtkCommand,
     vtkRenderer,
     vtkRenderWindow,
     vtkRenderWindowInteractor,
     vtkResliceImageViewer,
-    vtkInteractorStyleImage,
     vtkWidgetEvent
 )
 from vtk import (

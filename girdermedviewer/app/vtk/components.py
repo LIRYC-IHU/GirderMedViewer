@@ -1,11 +1,8 @@
-import logging
-import sys
-
 from collections import defaultdict
 from dataclasses import dataclass
 from enum import Enum
-
-from trame.app import get_server
+import logging
+import sys
 from trame.widgets import html, vtk, client
 from trame.widgets.vuetify2 import (VContainer, VCheckbox, VSlider)
 from ..utils import debounce, Button
@@ -51,14 +48,14 @@ class ToolsStrip(html.Div):
                 off_icon='mdi-eye-outline',
                 on_icon='mdi-eye-remove-outline',
                 color="black",
-                disabled=("displayed.length === 0 || file_loading_busy",)
+                disabled=("selected.length === 0",)
             )
 
             Button(
                 tooltip="Reset Views",
                 icon="mdi-camera-flip-outline",
                 click=self.ctrl.reset,
-                disabled=("displayed.length === 0 || file_loading_busy",)
+                disabled=("selected.length === 0",)
             )
 
 
@@ -83,14 +80,14 @@ class ViewGutter(html.Div):
                 "background-color: transparent;"
                 "height: 100%;"
             ),
-            v_if=("displayed.length>0 && !file_loading_busy",),
+            v_if=("selected.length > 0",),
             **kwargs
         )
         assert view.id is not None
         self.view = view
         with self:
             with html.Div(
-                v_if=("displayed.length>0",),
+                v_if=("selected.length > 0",),
                 classes="gutter-content d-flex flex-column fill-height pa-2"
             ):
                 Button(
@@ -216,12 +213,18 @@ class SliceView(VtkView):
     def unregister_data(self, data_id, no_render=False, only_data=None):
         super().unregister_data(data_id, no_render=True, only_data=None)
         # we can't have secondary volumes without at least a primary volume
-        if self.has_primary_volume() is False and self.has_secondary_volume():
+        if not self.has_primary_volume() and self.has_secondary_volume():
             image_slice = self.get_image_slices()[0]
             secondary_data_id = self.get_data_id(image_slice)
             # Replace the secondary volume into a primary volume
             self.add_primary_volume(image_slice.GetMapper().GetDataSetInput(), secondary_data_id)
             super().unregister_data(secondary_data_id, True, only_data=image_slice)
+
+        if not self.has_primary_volume() and self.has_mesh():
+            for mesh_slice in self.get_mesh_slices():
+                mesh_data_id = self.get_data_id(mesh_slice)
+                super().unregister_data(mesh_data_id, True, only_data=mesh_slice)
+
         if not no_render:
             self.update()
 
@@ -238,6 +241,9 @@ class SliceView(VtkView):
 
     def get_image_slices(self):
         return [obj for objs in self.data.values() for obj in objs if obj.IsA('vtkImageSlice')]
+
+    def get_mesh_slices(self):
+        return [obj for objs in self.data.values() for obj in objs if obj.IsA('vtkOpenGLActor')]
 
     def add_primary_volume(self, image_data, data_id=None):
         reslice_image_viewer = render_volume_in_slice(
@@ -275,8 +281,11 @@ class SliceView(VtkView):
     def has_secondary_volume(self):
         return len(self.get_image_slices()) > 0
 
+    def has_mesh(self):
+        return len(self.get_mesh_slices()) > 0
+
     def add_volume(self, image_data, data_id=None):
-        if self.has_primary_volume() is False:
+        if not self.has_primary_volume():
             self.add_primary_volume(image_data, data_id)
             self.on_reslice_cursor_interaction(
                 self.get_reslice_image_viewer(), None)
@@ -408,6 +417,14 @@ class ThreeDView(VtkView):
             ViewGutter(self)
 
 
+@dataclass
+class DataState:
+    opacity: str = None
+    window: str = None
+    level: str = None
+    preset: str = None
+
+
 class QuadView(VContainer):
     def __init__(self, **kwargs):
         super().__init__(
@@ -419,6 +436,9 @@ class QuadView(VContainer):
         self.state.fullscreen = None
         self._build_ui()
         self.ctrl.reset = self.reset
+        self.ctrl.clear = self.clear
+        self.ctrl.remove_data = self.remove_data
+        self.ctrl.load_files = self.load_files
 
     @property
     def twod_views(self):
@@ -445,6 +465,7 @@ class QuadView(VContainer):
 
     def load_files(self, file_path, data_id=None):
         logger.debug(f"Loading file {file_path}")
+        self.connect_data_to_state(data_id)
         if file_path.endswith(".stl"):
             poly_data = load_mesh(file_path)
             for view in self.views:
@@ -455,6 +476,36 @@ class QuadView(VContainer):
                 view.add_volume(image_data, data_id)
 
         self.ctrl.view_update()
+
+    def connect_data_to_state(self, data_id):
+        data_state = DataState(
+            opacity=f"opacity_{data_id}",
+            window=f"window_{data_id}",
+            level=f"level_{data_id}",
+            preset=f"preset_{data_id}",
+        )
+
+        self.state[data_state.opacity] = 0.8
+        self.state.flush()
+
+        @self.state.change(data_state.opacity)
+        def _on_opacity_change():
+            pass
+
+        @self.state.change(data_state.window)
+        def _on_window_change():
+            pass
+
+        @self.state.change(data_state.level)
+        def _on_level_change():
+            pass
+
+        @self.state.change(data_state.preset)
+        def _on_preset_change():
+            pass
+
+    def disconnect_data_from_state(self, data_id):
+        pass
 
     def _build_ui(self):
         with self:

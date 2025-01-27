@@ -1,13 +1,18 @@
+from contextlib import contextmanager
+from datetime import datetime
+from enum import Enum
+import logging
 import os
 import sys
-from contextlib import contextmanager
-from enum import Enum
 from tempfile import TemporaryDirectory
 
-import logging
 logging.basicConfig(stream=sys.stdout)
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
+
+
+def format_date(date_str, format):
+    return datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S.%f+00:00").strftime(format)
 
 
 class CacheMode(Enum):
@@ -43,6 +48,15 @@ class FileDownloader:
 
     def get_item_files(self, item):
         return self.girder_client.listFile(item["_id"])
+
+    def get_item_inherited_metadata(self, item):
+        parent_folder = self.girder_client.getFolder(item["folderId"])
+        metadata = parent_folder["meta"]
+        # Fetch metadata of all parents
+        while parent_folder["parentId"] != item["baseParentId"]:
+            parent_folder = self.girder_client.getFolder(parent_folder["parentId"])
+            metadata.update(parent_folder["meta"])
+        return metadata
 
     @contextmanager
     def download_file(self, file):
