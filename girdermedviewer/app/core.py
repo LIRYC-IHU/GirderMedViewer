@@ -9,6 +9,7 @@ from trame.ui.vuetify import SinglePageWithDrawerLayout
 from trame.widgets.vuetify2 import (VContainer, VRow, VCol, VBtn, VCard, VIcon)
 from .girder.components import GirderDrawer
 from .vtk.components import QuadView, ToolsStrip
+import xml.etree.ElementTree as ET
 
 # ---------------------------------------------------------
 # Engine class
@@ -30,6 +31,7 @@ class MyTrameApp:
         self.state.obliques_visibility = True
         self.state.main_drawer = False
         self.state.user = None
+        self.state.presets = self.get_presets()
         self.state.selected = []  # Items loaded and visible in the viewer
         self.state.last_clicked = 0
         self.state.action_keys = [{"for": []}]
@@ -45,6 +47,20 @@ class MyTrameApp:
     @property
     def ctrl(self):
         return self.server.controller
+
+    def get_presets(self):
+        xml_file = "/home/justineantoine/KITWARE/PROJECTS/INRIA/GirderMedViewer/resources/presets.xml"
+        icon_folder = "/home/justineantoine/KITWARE/PROJECTS/INRIA/GirderMedViewer/resources/PresetsIcons"
+        tree = ET.parse(xml_file)
+        root = tree.getroot()
+
+        presets = [
+            {
+                "title": vp.get("name"),
+                "props": {"data": os.path.join(icon_folder, f"{vp.get('name')}.png")}
+            } for vp in root.findall(".//VolumeProperty")
+        ]
+        return presets
 
     def load_config(self, config_file_path=None):
         """

@@ -112,6 +112,17 @@ def set_window_level(reslice_image_viewer, new_window_level):
     return True
 
 
+def set_reslice_opacity(reslice_image_viewer, opacity=0.8):
+    pass
+    # image_actor = reslice_image_viewer.GetImageActor()
+    # image_actor.GetProperty().SetOpacity(opacity)
+
+
+def set_slice_opacity(slice_object, opacity=0.8):
+    pass
+    # slice_object.GetProperty().SetOpacity(opacity)
+
+
 def reset_reslice(reslice_image_viewer):
     center = reslice_image_viewer.input.center
     reslice_image_viewer.GetResliceCursor().SetCenter(center)
@@ -316,6 +327,7 @@ def render_volume_as_overlay_in_slice(image_data, renderer, axis=2, opacity=0.8)
     image_slice = vtkImageSlice()
     image_slice.SetMapper(imageMapper)
     slice_property = image_slice.GetProperty()
+
     # actor.GetProperty().SetLookupTable(ColorTransferFunction)
     slice_property.SetInterpolationTypeToNearest()
     slice_property.SetOpacity(opacity)

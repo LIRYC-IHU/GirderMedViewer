@@ -4,11 +4,12 @@ import sys
 import traceback
 from time import time
 from trame_server.utils.asynchronous import create_task
-from trame.widgets import gwc, client
+from trame.widgets import gwc, client, html
 from trame.widgets.vuetify2 import (
     VContainer, VRow, VCol, VExpansionPanels, VExpansionPanel, VSlider,
     VExpansionPanelContent, VExpansionPanelHeader, VCard, VSubheader,
-    VListItem, VList, VDivider, VAutocomplete
+    VListItem, VList, VDivider, VAutocomplete, VTextField, Template
+
 )
 from .utils import FileDownloader, CacheMode, format_date
 from ..utils import Button
@@ -178,11 +179,10 @@ class GirderItemList(VCard):
 
     def _build_ui(self):
         with self:
-            with VExpansionPanels(focusable=True, multiple=True):
+            with VExpansionPanels(accordion=True, focusable=True, multiple=True):
                 GirderItemCard(
-                    v_for="(item, i) in selected",
-                    item="item",
-                    index="i",
+                    v_for="aaa in selected",
+                    item="aaa"
                 )
             with VCol(cols="auto"):
                 Button(
@@ -197,13 +197,12 @@ class GirderItemList(VCard):
 
 
 class GirderItemCard(VExpansionPanel):
-    def __init__(self, item, index, **kwargs):
+    def __init__(self, item, **kwargs):
         super().__init__(
             value=item,
             **kwargs
         )
         self.item = item
-        self.index = index
         self._build_ui()
 
     def _build_ui(self):
@@ -222,9 +221,9 @@ class GirderItemCard(VExpansionPanel):
                         )
 
             with VExpansionPanelContent(v_if=(f"{self.item}.loaded",)):
-                # ItemSettings(self.item)
-                ItemInfo(self.item)
-                ItemMetadata(self.item)
+                ItemSettings(item=self.item)
+                ItemInfo(item=self.item)
+                ItemMetadata(item=self.item)
 
     def delete_item(self, item_id):
         # redundant with GirdeFileSelector unselect_item
@@ -242,23 +241,87 @@ class ItemSettings(VCard):
         with self:
             with VList(dense=True, classes="pa-0"):
                 with VRow(no_gutters=True):
-                    with VCol(cols="auto"):
+                    with VCol(cols=3):
                         VSubheader("Opacity", classes="subtitle-1 font-weight-bold pl-4")
                     with VCol():
                         with VListItem():
                             VSlider(
-                                # v_model=("opacity_{{item._id}}",),
+                                value=("get(`opacity_${" + self.item + "._id}`)",),
+                                end="set(`opacity_${" + self.item + "._id}`, $event)",
                                 min=0,
                                 max=1,
                                 step=0.05,
-                                thumb_label=True
+                                thumb_label=True,
                             )
-                with VRow(no_gutters=True):
-                    with VCol(cols="auto"):
+                with VRow(align="center", no_gutters=True):
+                    with VCol(cols=3):
                         VSubheader("Preset", classes="subtitle-1 font-weight-bold pl-4")
                     with VCol():
                         with VListItem():
-                            VAutocomplete()
+                            VAutocomplete(
+                                items=("presets",),
+                                item_text="title",
+                                value=("get(`preset_${" + self.item + "._id}`)",),
+                                change="set(`preset_${" + self.item + "._id}`, $event)",
+                            )
+
+                            # with VSelect(
+                            #     items=("presets",),
+                            #     value=("get(`preset_${" + self.item + "._id}`)",),
+                            #     change="set(`preset_${" + self.item + "._id}`, $event)",
+                            # ):
+                            #     with Template(v_slot_item="{item}"), VListItem(v_bind="item"):
+                            #         VImg(src=("item.props.data",), height=64, width=64)
+                            #         html.Span("{{ item.props.data }}", classes="pl-2")
+
+                            #     with Template(v_slot_selection="{item}"):
+                            #         VImg(src=("item.props.data",), height=32, width=32)
+                            #         html.Span("{{ item.title }}", classes="pl-2")
+
+                        with VListItem():
+                            with VRow(justify="space-between"):
+                                with VCol():
+                                    VTextField(
+                                        value=("get(`preset_min_${" + self.item + "._id}`)",),
+                                        change="set(`preset_min_${" + self.item + "._id}`, $event)",
+                                        type="number"
+                                    )
+                                with VCol():
+                                    VTextField(
+                                        value=("get(`preset_max_${" + self.item + "._id}`)",),
+                                        change="set(`preset_max_${" + self.item + "._id}`, $event)",
+                                        type="number"
+                                    )
+
+                with VRow(align="center", no_gutters=True):
+                    with VCol(cols=3):
+                        VSubheader("Window", classes="subtitle-1 font-weight-bold pl-4")
+                    with VCol():
+                        with VListItem():
+                            VSlider(
+                                value=("get(`window_${" + self.item + "._id}`)",),
+                                end="set(`window_${" + self.item + "._id}`, $event)",
+                                min=0,
+                                max=1,
+                                step=0.05,
+                                thumb_label=True,
+                                dense=True
+                            )
+
+                with VRow(align="center", no_gutters=True):
+                    with VCol(cols=3):
+                        VSubheader("Level", classes="subtitle-1 font-weight-bold pl-4")
+                    with VCol():
+                        with VListItem():
+                            VSlider(
+                                value=("get(`level_${" + self.item + "._id}`)",),
+                                end="set(`level_${" + self.item + "._id}`, $event)",
+                                min=0,
+                                max=1,
+                                step=0.05,
+                                thumb_label=True,
+                                dense=True
+                            )
 
 
 class ItemInfo(VCard):
@@ -270,10 +333,19 @@ class ItemInfo(VCard):
     def _build_ui(self):
         with self:
             VSubheader("Info", classes="subtitle-1 font-weight-bold")
-            with VList(dense=True, classes="pa-0"):
-                VListItem("Size: {{ " + self.item + ".humanSize}}", classes="py-1 body-2")
-                VListItem("Created on {{ " + self.item + ".humanCreated}}", classes="py-1 body-2")
-                VListItem("Updated on {{ " + self.item + ".humanUpdated}}", classes="py-1 body-2")
+            with VList(dense=True, classes="pa-0", subheader=True):
+                VListItem(
+                    "Size: {{ " + self.item + ".humanSize}}",
+                    classes="py-1 body-2",
+                )
+                VListItem(
+                    "Created on {{ " + self.item + ".humanCreated}}",
+                    classes="py-1 body-2",
+                )
+                VListItem(
+                    "Updated on {{ " + self.item + ".humanUpdated}}",
+                    classes="py-1 body-2",
+                )
 
 
 class ItemMetadata(VCard):
@@ -285,7 +357,7 @@ class ItemMetadata(VCard):
     def _build_ui(self):
         with self:
             VSubheader("Metadata", classes="subtitle-1 font-weight-bold pl-4")
-            with VList(dense=True, classes="pa-0"):
+            with VList(dense=True, classes="pa-0", subheader=True):
                 with VRow(no_gutters=True), VCol(
                     cols=6,
                     v_for=f"(value, key) in {self.item}.meta"

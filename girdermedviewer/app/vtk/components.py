@@ -24,8 +24,10 @@ from .utils import (
     reset_reslice,
     reset_3D,
     set_oblique_visibility,
+    set_slice_opacity,
     set_reslice_center,
     set_reslice_normal,
+    set_reslice_opacity,
     set_window_level
 )
 
@@ -275,15 +277,6 @@ class SliceView(VtkView):
         self.register_data(data_id, actor)
         self.update()
 
-    def has_primary_volume(self):
-        return self.get_reslice_image_viewer() is not None
-
-    def has_secondary_volume(self):
-        return len(self.get_image_slices()) > 0
-
-    def has_mesh(self):
-        return len(self.get_mesh_slices()) > 0
-
     def add_volume(self, image_data, data_id=None):
         if not self.has_primary_volume():
             self.add_primary_volume(image_data, data_id)
@@ -301,6 +294,15 @@ class SliceView(VtkView):
         self.register_data(data_id, actor)
         self.update()
 
+    def has_primary_volume(self):
+        return self.get_reslice_image_viewer() is not None
+
+    def has_secondary_volume(self):
+        return len(self.get_image_slices()) > 0
+
+    def has_mesh(self):
+        return len(self.get_mesh_slices()) > 0
+
     def reset(self):
         reslice_image_viewer = self.get_reslice_image_viewer()
         if reslice_image_viewer is not None:
@@ -312,6 +314,15 @@ class SliceView(VtkView):
         if reslice_image_viewer is not None:
             set_oblique_visibility(reslice_image_viewer, obliques_visibility)
             self.update()
+
+    def set_data_opacity(self, data_id, opacity):
+        logger.debug(f"set_opacity: {opacity}")
+        for data in list(self.data[data_id]):
+            if data.IsA('vtkImageSlice'):
+                set_slice_opacity(data, opacity)
+            elif data.IsA('vtkResliceImageViewer'):
+                set_reslice_opacity(data, opacity)
+        self.update()
 
     def on_slice_scroll(self, reslice_image_viewer, event):
         """
@@ -412,17 +423,23 @@ class ThreeDView(VtkView):
         reset_3D(self.renderer)
         self.update()
 
+    def set_data_preset(self, data_id, preset, range):
+        logger.debug(f"set_data_preset: {preset}, {range}")
+        pass
+
     def _build_ui(self):
         with self:
             ViewGutter(self)
 
 
 @dataclass
-class DataState:
+class DataSettingsState:
     opacity: str = None
     window: str = None
     level: str = None
     preset: str = None
+    preset_min: str = None
+    preset_max: str = None
 
 
 class QuadView(VContainer):
@@ -465,7 +482,7 @@ class QuadView(VContainer):
 
     def load_files(self, file_path, data_id=None):
         logger.debug(f"Loading file {file_path}")
-        self.connect_data_to_state(data_id)
+        self.connect_data_settings_to_state(data_id)
         if file_path.endswith(".stl"):
             poly_data = load_mesh(file_path)
             for view in self.views:
@@ -477,35 +494,41 @@ class QuadView(VContainer):
 
         self.ctrl.view_update()
 
-    def connect_data_to_state(self, data_id):
-        data_state = DataState(
+    def connect_data_settings_to_state(self, data_id):
+        data_settings = DataSettingsState(
             opacity=f"opacity_{data_id}",
             window=f"window_{data_id}",
             level=f"level_{data_id}",
             preset=f"preset_{data_id}",
+            preset_min=f"preset_min_{data_id}",
+            preset_max=f"preset_max_{data_id}",
         )
 
-        self.state[data_state.opacity] = 0.8
+        self.state[data_settings.opacity] = 0.8
+        self.state[data_settings.window] = 0
+        self.state[data_settings.level] = 100
+        self.state[data_settings.preset] = self.state.presets[0]
+        self.state[data_settings.preset_min] = 0
+        self.state[data_settings.preset_max] = 100
         self.state.flush()
 
-        @self.state.change(data_state.opacity)
-        def _on_opacity_change():
+        @self.state.change(data_settings.opacity)
+        def _on_opacity_change(*_, **kwargs):
+            for view in self.twod_views:
+                view.set_data_opacity(data_id, kwargs[data_settings.opacity])
+
+        @self.state.change(data_settings.window, data_settings.level)
+        def _on_window_level_change(*_, **kwargs):
             pass
 
-        @self.state.change(data_state.window)
-        def _on_window_change():
-            pass
-
-        @self.state.change(data_state.level)
-        def _on_level_change():
-            pass
-
-        @self.state.change(data_state.preset)
-        def _on_preset_change():
-            pass
-
-    def disconnect_data_from_state(self, data_id):
-        pass
+        @self.state.change(data_settings.preset, data_settings.preset_min, data_settings.preset_max)
+        def _on_preset_change(*_, **kwargs):
+            for view in self.threed_views:
+                view.set_data_preset(
+                    data_id,
+                    kwargs[data_settings.preset],
+                    (kwargs[data_settings.preset_min], kwargs[data_settings.preset_max]),
+                )
 
     def _build_ui(self):
         with self:
