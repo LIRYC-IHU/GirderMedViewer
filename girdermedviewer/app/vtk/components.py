@@ -180,6 +180,14 @@ class VtkView(vtk.VtkRemoteView):
         if not no_render:
             self.update()
 
+    def set_mesh_opacity(self, data_id, opacity):
+        logger.debug(f"set_mesh_opacity({data_id}): {opacity}")
+        pass
+
+    def set_mesh_color(self, data_id, color):
+        logger.debug(f"set_mesh_color({data_id}): {color}")
+        pass
+
 
 class Orientation(Enum):
     SAGITTAL = 0
@@ -315,8 +323,8 @@ class SliceView(VtkView):
             set_oblique_visibility(reslice_image_viewer, obliques_visibility)
             self.update()
 
-    def set_data_opacity(self, data_id, opacity):
-        logger.debug(f"set_opacity: {opacity}")
+    def set_volume_opacity(self, data_id, opacity):
+        logger.debug(f"set_volume_opacity({data_id}): {opacity}")
         for data in list(self.data[data_id]):
             if data.IsA('vtkImageSlice'):
                 set_slice_opacity(data, opacity)
@@ -363,6 +371,7 @@ class SliceView(VtkView):
     def on_window_leveling(self, interactor_style, event):
         # Because it is called within a co-routine, window_level is not
         # flushed right away.
+        # TODO: fetch primary volume id to change its window level
         self.state.window_level = (
             interactor_style.GetCurrentImageProperty().GetColorWindow(),
             interactor_style.GetCurrentImageProperty().GetColorLevel())
@@ -423,8 +432,8 @@ class ThreeDView(VtkView):
         reset_3D(self.renderer)
         self.update()
 
-    def set_data_preset(self, data_id, preset, range):
-        logger.debug(f"set_data_preset: {preset}, {range}")
+    def set_volume_preset(self, data_id, preset, range):
+        logger.debug(f"set_volume_preset({data_id}): {preset}, {range}")
         pass
 
     def _build_ui(self):
@@ -433,13 +442,22 @@ class ThreeDView(VtkView):
 
 
 @dataclass
-class DataSettingsState:
+class VolumeSettingsState:
     opacity: str = None
     window: str = None
     level: str = None
     preset: str = None
     preset_min: str = None
     preset_max: str = None
+    range_min: str = None
+    range_max: str = None
+    color: str = None
+
+
+@dataclass
+class MeshSettingsState:
+    opacity: str = None
+    color: str = None
 
 
 class QuadView(VContainer):
@@ -482,53 +500,80 @@ class QuadView(VContainer):
 
     def load_files(self, file_path, data_id=None):
         logger.debug(f"Loading file {file_path}")
-        self.connect_data_settings_to_state(data_id)
         if file_path.endswith(".stl"):
             poly_data = load_mesh(file_path)
             for view in self.views:
                 view.add_mesh(poly_data, data_id)
+            self.connect_mesh_settings_to_state(data_id)
         else:
             image_data = load_volume(file_path)
             for view in self.views:
                 view.add_volume(image_data, data_id)
+            self.connect_volume_settings_to_state(image_data, data_id)
 
         self.ctrl.view_update()
 
-    def connect_data_settings_to_state(self, data_id):
-        data_settings = DataSettingsState(
+    def connect_volume_settings_to_state(self, data, data_id):
+        volume_settings = VolumeSettingsState(
             opacity=f"opacity_{data_id}",
             window=f"window_{data_id}",
             level=f"level_{data_id}",
             preset=f"preset_{data_id}",
             preset_min=f"preset_min_{data_id}",
             preset_max=f"preset_max_{data_id}",
+            range_min=f"range_min_{data_id}",
+            range_max=f"range_max_{data_id}",
         )
-
-        self.state[data_settings.opacity] = 0.8
-        self.state[data_settings.window] = 0
-        self.state[data_settings.level] = 100
-        self.state[data_settings.preset] = self.state.presets[0]
-        self.state[data_settings.preset_min] = 0
-        self.state[data_settings.preset_max] = 100
+        scalar_range = data.GetScalarRange()
+        self.state[volume_settings.opacity] = 1
+        self.state[volume_settings.range_min], self.state[volume_settings.range_max] = scalar_range
+        self.state[volume_settings.window] = (scalar_range[0] + scalar_range[1]) / 2 - scalar_range[0]
+        self.state[volume_settings.level] = (scalar_range[0] + scalar_range[1]) / 2
+        self.state[volume_settings.preset] = self.state.presets[0]
+        self.state[volume_settings.preset_min], self.state[volume_settings.preset_max] = scalar_range
         self.state.flush()
 
-        @self.state.change(data_settings.opacity)
+        @self.state.change(volume_settings.opacity)
         def _on_opacity_change(*_, **kwargs):
             for view in self.twod_views:
-                view.set_data_opacity(data_id, kwargs[data_settings.opacity])
+                view.set_volume_opacity(data_id, kwargs[volume_settings.opacity])
 
-        @self.state.change(data_settings.window, data_settings.level)
+        @self.state.change(volume_settings.window, volume_settings.level)
         def _on_window_level_change(*_, **kwargs):
-            pass
+            for view in self.twod_views:
+                view.set_volume_window_level(
+                    data_id,
+                    (kwargs[volume_settings.window], kwargs[volume_settings.level])
+                )
 
-        @self.state.change(data_settings.preset, data_settings.preset_min, data_settings.preset_max)
+        @self.state.change(volume_settings.preset, volume_settings.preset_min, volume_settings.preset_max)
         def _on_preset_change(*_, **kwargs):
             for view in self.threed_views:
-                view.set_data_preset(
+                view.set_volume_preset(
                     data_id,
-                    kwargs[data_settings.preset],
-                    (kwargs[data_settings.preset_min], kwargs[data_settings.preset_max]),
+                    kwargs[volume_settings.preset],
+                    (kwargs[volume_settings.preset_min], kwargs[volume_settings.preset_max]),
                 )
+
+    def connect_mesh_settings_to_state(self, data_id):
+        mesh_settings = MeshSettingsState(
+            opacity=f"opacity_{data_id}",
+            color=f"color_{data_id}"
+        )
+
+        self.state[mesh_settings.opacity] = 0.8
+        self.state[mesh_settings.color] = "#FF0000"
+        self.state.flush()
+
+        @self.state.change(mesh_settings.opacity)
+        def _on_opacity_change(*_, **kwargs):
+            for view in self.views:
+                view.set_mesh_opacity(data_id, kwargs[mesh_settings.opacity])
+
+        @self.state.change(mesh_settings.color)
+        def _on_color_change(*_, **kwargs):
+            for view in self.views:
+                view.set_mesh_color(data_id, kwargs[mesh_settings.color])
 
     def _build_ui(self):
         with self:

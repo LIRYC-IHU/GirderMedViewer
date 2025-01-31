@@ -49,15 +49,14 @@ class MyTrameApp:
         return self.server.controller
 
     def get_presets(self):
+        #TODO: to adapt with last PR
         xml_file = "/home/justineantoine/KITWARE/PROJECTS/INRIA/GirderMedViewer/resources/presets.xml"
-        icon_folder = "/home/justineantoine/KITWARE/PROJECTS/INRIA/GirderMedViewer/resources/PresetsIcons"
         tree = ET.parse(xml_file)
         root = tree.getroot()
 
         presets = [
             {
-                "title": vp.get("name"),
-                "props": {"data": os.path.join(icon_folder, f"{vp.get('name')}.png")}
+                "title": vp.get("name")
             } for vp in root.findall(".//VolumeProperty")
         ]
         return presets

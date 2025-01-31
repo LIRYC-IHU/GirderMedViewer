@@ -4,11 +4,11 @@ import sys
 import traceback
 from time import time
 from trame_server.utils.asynchronous import create_task
-from trame.widgets import gwc, client, html
+from trame.widgets import gwc, client
 from trame.widgets.vuetify2 import (
     VContainer, VRow, VCol, VExpansionPanels, VExpansionPanel, VSlider,
     VExpansionPanelContent, VExpansionPanelHeader, VCard, VSubheader,
-    VListItem, VList, VDivider, VAutocomplete, VTextField, Template
+    VListItem, VList, VDivider, VAutocomplete, VTextField, VColorPicker
 
 )
 from .utils import FileDownloader, CacheMode, format_date
@@ -241,9 +241,9 @@ class ItemSettings(VCard):
         with self:
             with VList(dense=True, classes="pa-0"):
                 with VRow(no_gutters=True):
-                    with VCol(cols=3):
+                    with VCol(cols=2):
                         VSubheader("Opacity", classes="subtitle-1 font-weight-bold pl-4")
-                    with VCol():
+                    with VCol(cols=10):
                         with VListItem():
                             VSlider(
                                 value=("get(`opacity_${" + self.item + "._id}`)",),
@@ -253,10 +253,14 @@ class ItemSettings(VCard):
                                 step=0.05,
                                 thumb_label=True,
                             )
-                with VRow(align="center", no_gutters=True):
-                    with VCol(cols=3):
+                with VRow(
+                    v_if=("get(`preset_${" + self.item + "._id}`)",),
+                    align="center",
+                    no_gutters=True
+                ):
+                    with VCol(cols=2):
                         VSubheader("Preset", classes="subtitle-1 font-weight-bold pl-4")
-                    with VCol():
+                    with VCol(cols=10):
                         with VListItem():
                             VAutocomplete(
                                 items=("presets",),
@@ -264,19 +268,6 @@ class ItemSettings(VCard):
                                 value=("get(`preset_${" + self.item + "._id}`)",),
                                 change="set(`preset_${" + self.item + "._id}`, $event)",
                             )
-
-                            # with VSelect(
-                            #     items=("presets",),
-                            #     value=("get(`preset_${" + self.item + "._id}`)",),
-                            #     change="set(`preset_${" + self.item + "._id}`, $event)",
-                            # ):
-                            #     with Template(v_slot_item="{item}"), VListItem(v_bind="item"):
-                            #         VImg(src=("item.props.data",), height=64, width=64)
-                            #         html.Span("{{ item.props.data }}", classes="pl-2")
-
-                            #     with Template(v_slot_selection="{item}"):
-                            #         VImg(src=("item.props.data",), height=32, width=32)
-                            #         html.Span("{{ item.title }}", classes="pl-2")
 
                         with VListItem():
                             with VRow(justify="space-between"):
@@ -293,34 +284,57 @@ class ItemSettings(VCard):
                                         type="number"
                                     )
 
-                with VRow(align="center", no_gutters=True):
-                    with VCol(cols=3):
+                with VRow(
+                    v_if=("get(`window_${" + self.item + "._id}`)",),
+                    align="center",
+                    no_gutters=True
+                ):
+                    with VCol(cols=2):
                         VSubheader("Window", classes="subtitle-1 font-weight-bold pl-4")
-                    with VCol():
+                    with VCol(cols=10):
                         with VListItem():
                             VSlider(
                                 value=("get(`window_${" + self.item + "._id}`)",),
                                 end="set(`window_${" + self.item + "._id}`, $event)",
                                 min=0,
-                                max=1,
-                                step=0.05,
+                                max=("get(`range_max_${" + self.item + "._id}`)-get(`range_min_${" + self.item + "._id}`)",),
+                                step=1,
                                 thumb_label=True,
                                 dense=True
                             )
 
-                with VRow(align="center", no_gutters=True):
-                    with VCol(cols=3):
+                with VRow(
+                    v_if=("get(`level_${" + self.item + "._id}`)",),
+                    align="center",
+                    no_gutters=True
+                ):
+                    with VCol(cols=2):
                         VSubheader("Level", classes="subtitle-1 font-weight-bold pl-4")
-                    with VCol():
+                    with VCol(cols=10):
                         with VListItem():
                             VSlider(
                                 value=("get(`level_${" + self.item + "._id}`)",),
                                 end="set(`level_${" + self.item + "._id}`, $event)",
-                                min=0,
-                                max=1,
-                                step=0.05,
+                                min=("get(`range_min_${" + self.item + "._id}`)",),
+                                max=("get(`range_max_${" + self.item + "._id}`)",),
+                                step=1,
                                 thumb_label=True,
                                 dense=True
+                            )
+
+                with VRow(
+                    v_if=("get(`color_${" + self.item + "._id}`)",),
+                    align="center",
+                    no_gutters=True
+                ):
+                    with VCol(cols=2):
+                        VSubheader("Color", classes="subtitle-1 font-weight-bold pl-4")
+                    with VCol(cols=10):
+                        with VListItem():
+                            VColorPicker(
+                                value=("get(`color_${" + self.item + "._id}`)",),
+                                input="set(`color_${" + self.item + "._id}`, $event)",
+                                hide_inputs=True,
                             )
 
 
