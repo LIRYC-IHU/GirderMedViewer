@@ -73,7 +73,7 @@ class GirderFileSelector(gwc.GirderFileManager):
         if clicked_time - self.state.last_clicked < 1:
             return
         self.state.last_clicked = clicked_time
-        is_selected = item in self.state.selected
+        is_selected = item["_id"] in [i["_id"] for i in self.state.selected]
         logger.debug(f"Toggle item {item} selected={is_selected}")
         if is_selected:
             self.unselect_item(item)
@@ -88,7 +88,7 @@ class GirderFileSelector(gwc.GirderFileManager):
         self.state.location = new_location
 
     def unselect_item(self, item):
-        self.state.selected = [i for i in self.state.selected if i != item]
+        self.state.selected = [i for i in self.state.selected if i["_id"] != item["_id"]]
         self.ctrl.remove_data(item["_id"])
 
     def unselect_items(self):
@@ -181,8 +181,8 @@ class GirderItemList(VCard):
         with self:
             with VExpansionPanels(accordion=True, focusable=True, multiple=True):
                 GirderItemCard(
-                    v_for="aaa in selected",
-                    item="aaa"
+                    v_for="item in selected",
+                    item="item"
                 )
             with VCol(cols="auto"):
                 Button(
