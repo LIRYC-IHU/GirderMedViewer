@@ -170,7 +170,7 @@ class MyTrameApp:
                     text="{{ user_name }}",
                     icon="mdi-logout",
                     large=True,
-                    click=self.ctrl.provider_logout
+                    click=self.ctrl.provider_logout,
                 )
                 Button(
                     v_if=("!user",),
@@ -178,7 +178,7 @@ class MyTrameApp:
                     icon="mdi-login",
                     large=True,
                     click="display_login_dialog = !display_login_dialog",
-                    disabled=("!girder_connected",)
+                    disabled=("!girder_connected",),
                 )
 
             with self.ui.content:

@@ -1,10 +1,10 @@
 import logging
-
 from collections import defaultdict
 from dataclasses import dataclass
 from enum import Enum
 from trame.widgets import html, vtk, client
-from trame.widgets.vuetify2 import (VContainer, VCheckbox, VSlider)
+from trame.widgets.vuetify2 import (VContainer, Template, VSlider, VMenu, VCard, VRow, VCol,
+                                    VCardText, VTextField)
 from ..utils import debounce, Button
 from .utils import (
     create_rendering_pipeline,
@@ -37,6 +37,60 @@ from .utils import (
 logger = logging.getLogger(__name__)
 
 
+class PositionDialog(VMenu):
+    def __init__(self, **kwargs):
+        super().__init__(
+            v_model=("position_dialog", False),
+            close_on_content_click=False,
+            close_on_click=False,
+            max_width=300,
+            offset_x=True,
+            left=("main_drawer",),
+            offset_overflow=True,
+            transition="slide-x-transition",
+            **kwargs,
+        )
+        self.state.position = None
+        self.state.normals = None
+        client.Style(".v-text-field__prefix {font-weight: 700 !important} "
+                     ".v-text-field__details {display: none !important} "
+                     ".v-text-field {padding-top: 0px; margin-top: 0px; !important} "
+                     ".v-btn:before {opacity: 0 !important} ")
+        self._build_ui()
+
+    def _build_ui(self):
+        with self:
+            with Template(v_slot_activator="{ on: menu }"):
+                Button(
+                    tooltip=("{{ position_dialog ? 'Hide position dialog' : 'Show position dialog' }}",),
+                    icon="mdi-target",
+                    disabled=("selected.length === 0",),
+                    v_on="menu",
+                    icon_color=("position_dialog ? 'primary' : 'black'",),
+                )
+            with VCard(v_if=("position && selected.length > 0",)), VCardText():
+                with VRow(align="center", justify="space-between"):
+                    with VCol(
+                        v_for=("(field, index) in \
+                                [{ prefix: 'X', color: 'red' }, \
+                                { prefix: 'Y', color: 'green' }, \
+                                { prefix: 'Z', color: 'blue' }]",)
+                    ):
+                        VTextField(
+                            value=("parseFloat(position[index]).toFixed(2)",),
+                            input=(self.set_position, "[$event, index]"),
+                            prefix=("field.prefix",),
+                            color=("field.color",),
+                            type="number",
+                        )
+
+    def set_position(self, value, index):
+        if value:
+            old_position = list(self.state.position)
+            old_position[int(index)] = float(value)
+            self.state.position = tuple(old_position)
+
+
 class ToolsStrip(html.Div):
     def __init__(self, **kwargs):
         super().__init__(
@@ -46,20 +100,21 @@ class ToolsStrip(html.Div):
         client.Style(".v-input--selection-controls__input {margin-right: 0px!important}")
 
         with self:
-            VCheckbox(
-                v_model=("obliques_visibility", True),
-                off_icon='mdi-eye-outline',
-                on_icon='mdi-eye-remove-outline',
-                color="black",
-                disabled=("selected.length === 0",)
+            Button(
+                tooltip=("{{ obliques_visibility ? 'Hide obliques' : 'Show obliques' }}",),
+                icon=("{{ obliques_visibility ? 'mdi-eye-remove-outline' : 'mdi-eye-outline' }}",),
+                click="obliques_visibility = !obliques_visibility",
+                disabled=("selected.length === 0",),
             )
 
             Button(
-                tooltip="Reset Views",
+                tooltip="Reset views",
                 icon="mdi-camera-flip-outline",
                 click=self.ctrl.reset,
                 disabled=("selected.length === 0",)
             )
+
+            PositionDialog()
 
 
 @dataclass
@@ -456,9 +511,10 @@ class SliceView(VtkView):
         self.state.flush()  # flush state.position
 
     def on_cursor_changed(self, position, normals, **kwargs):
-        set_reslice_center(self.get_reslice_image_viewer(), position)
-        set_reslice_normal(self.get_reslice_image_viewer(), normals[self.orientation.value], self.orientation.value)
-        self.update()
+        if position is not None and normals is not None:
+            set_reslice_center(self.get_reslice_image_viewer(), position)
+            set_reslice_normal(self.get_reslice_image_viewer(), normals[self.orientation.value], self.orientation.value)
+            self.update()
 
     def get_slice_range(self):
         reslice_image_viewer = self.get_reslice_image_viewer()

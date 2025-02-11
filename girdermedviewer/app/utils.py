@@ -18,6 +18,7 @@ class Button():
         icon_color: str = "black",
         click: Optional[Callable] = None,
         size: int = 40,
+        v_on: str = None,
         **kwargs,
     ) -> None:
 
@@ -29,7 +30,7 @@ class Button():
             transition="slide-x-transition" if text is None else "slide-y-transition",
             disabled=tooltip is None,
         ):
-            with Template(v_slot_activator="{ on, attrs }"):
+            with Template(v_slot_activator="{ on : tooltip }"):
                 with VBtn(
                     text=text is None and icon is not None,
                     rounded=text is None,
@@ -38,8 +39,7 @@ class Button():
                     min_height=None if text is not None else size,
                     min_width=None if text is not None else size,
                     click=click,
-                    v_bind="attrs",
-                    v_on="on",
+                    v_on="tooltip" if v_on is None else "{ ...tooltip, ..." + v_on + " }",
                     **kwargs,
                 ):
                     if text is not None:

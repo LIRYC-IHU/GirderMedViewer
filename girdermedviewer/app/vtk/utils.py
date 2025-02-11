@@ -87,6 +87,11 @@ def get_reslice_cursor_representation(reslice_object):
     return reslice_object
 
 
+def get_closest_point_in_bounds(bounds, point):
+    return tuple([max(bounds[i], min(point[i//2], bounds[i+1]))
+                  for i in range(0, len(bounds), 2)])
+
+
 def get_reslice_center(reslice_object):
     """
     Return the point where the 3 planes intersect.
@@ -102,6 +107,8 @@ def set_reslice_center(reslice_object, new_center):
     center = reslice_cursor.GetCenter()
     if center == new_center:
         return False
+    if not vtkBoundingBox(reslice_cursor.image.bounds).ContainsPoint(new_center):
+        new_center = get_closest_point_in_bounds(reslice_cursor.image.bounds, new_center)
     reslice_cursor.SetCenter(new_center)
     return True
 
@@ -191,7 +198,7 @@ def get_reslice_range(reslice_image_viewer, axis, center=None):
     if reslice_image_viewer is None:
         return None
     bounds = reslice_image_viewer.GetInput().GetBounds()
-    if center is None:
+    if center is None or not vtkBoundingBox(bounds).ContainsPoint(center):
         center = get_reslice_center(reslice_image_viewer)
     normal = list(get_reslice_normal(reslice_image_viewer, axis))
     vtkMath.MultiplyScalar(normal, 1000000.0)
@@ -231,10 +238,10 @@ def get_number_of_slices(reslice_image_viewer, axis):
 
 
 def get_slice_index_from_position(position, reslice_image_viewer, axis):
-    """Position must be on the line defined by stard and end."""
+    """Position must be in the reslice range, else the current reslice position is used."""
     if reslice_image_viewer is None:
         return None
-    start, end = get_reslice_range(reslice_image_viewer, axis, position)
+    start, _ = get_reslice_range(reslice_image_viewer, axis, position)
     spacing = reslice_image_viewer.GetInput().GetSpacing()
     return get_index(start, position, spacing)
 
