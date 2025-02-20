@@ -442,7 +442,7 @@ class QuadView(VContainer):
 
     def load_files(self, file_path, data_id=None):
         logger.debug(f"Loading file {file_path}")
-        if file_path.endswith(".stl"):
+        if file_path.endswith(".stl") | file_path.endswith(".vtk"):
             poly_data = load_mesh(file_path)
             for view in self.views:
                 view.add_mesh(poly_data, data_id)

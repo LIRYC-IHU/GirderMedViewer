@@ -4,13 +4,14 @@ import traceback
 from time import time
 
 from trame_server.utils.asynchronous import create_task
-from trame.widgets import gwc
-from trame.widgets.vuetify2 import (VContainer, VRow, VCol,)
+from trame.widgets import gwc, trame
+from trame.widgets.vuetify2 import (VContainer, VRow, VCol, VTextField,)
 from .utils import FileDownloader, CacheMode
 from ..utils import Button
 from girder_client import GirderClient
 
 logger = logging.getLogger(__name__)
+GIRDER_ID_HINT = 'Please provide an ID.'
 
 
 class GirderDrawer(VContainer):
@@ -24,6 +25,28 @@ class GirderDrawer(VContainer):
 
     def _build_ui(self):
         with self:
+            with VRow(
+                align_content="start",
+                justify="center",
+                no_gutters=True,
+                classes='py-1'
+            ):
+                with VCol(cols=12):
+                    VTextField(
+                            label=('girder_id_label', 'Folder ID / URL'),
+                            v_model=("girder_id_input", None),
+                            autofocus=True,
+                            persistent_hint=True,
+                            hint=('girder_id_hint', GIRDER_ID_HINT),
+                            dense=True,
+                            outlined=True,
+                            classes="py-1 px-1",
+                            error=('girder_id_error', False),
+                            success=('girder_id_success', False),
+                            append_icon='mdi-refresh',
+                            click_append=self.ctrl.reload_girder_id,
+                            )
+
             with VRow(
                 style="height:100%",
                 align_content="start",
@@ -80,6 +103,99 @@ class GirderFileSelector(gwc.GirderFileManager):
         self.state.change("location", "displayed")(self.on_location_changed)
         self.state.change("api_url")(self.set_api_url)
         self.state.change("user")(self.set_user)
+
+        self.callback()
+        self.ctrl.reload_girder_id = self.reload_girder_id
+
+        self.state.url = ''
+        # setup  client side function to catch the input url
+        client_triggers = trame.ClientTriggers(
+            ref="client_triggers",
+            method1="url=window.location.href",
+        )
+        self.ctrl.call = client_triggers.call
+        self.ctrl.on_client_connected.add(self.on_client_connected) # make it automnatic
+
+
+    def on_client_connected(self, *args, **kwargs):
+        """ Check for and load the id in input url.
+        """
+        self.ctrl.call('method1')
+        # url reading in ctrl.call, won't be done at called time
+        # use async to launch state change afterward.
+        async def _load_url(): 
+            while not self.file_downloader.girder_client.token: # wait at login screen
+                await asyncio.sleep(0.1)
+
+            await asyncio.sleep(0.1)
+            if self.state.url.split('/')[-1] != 'index.html':
+                self.state.girder_id_input = self.state.url
+            else:
+                self.state.girder_id_input = ''
+            self.state.flush()
+        create_task(_load_url())
+
+    def reload_girder_id(self,):
+        """
+        """
+        self.state.dirty('girder_id_input')
+
+    def callback(self,):
+        """
+        """
+        @self.state.change('girder_id_input')
+        def on_girder_id_input_changed(girder_id_input, **kwargs):
+            """ Find compatible folder ID from the VTextField box.
+            """
+            if girder_id_input in [None, '']:
+                # reset success state
+                self.state.girder_id_hint = GIRDER_ID_HINT
+                self.state.girder_id_error = False 
+                self.state.girder_id_success = False
+
+            else:
+                # make it works with whole url
+                if '/' in girder_id_input:
+                    girder_id_input = girder_id_input.split('/')[-1]
+                self.state.girder_id_input = girder_id_input
+
+                try: 
+                    ## try loading id as folder
+                    location = self.file_downloader.girder_client.getFolder(girder_id_input)
+                    self.update_location(location)
+
+                    # change location success
+                    self.state.girder_id_error = False
+                    self.state.girder_id_success = True
+                    self.state.girder_id_hint = "Click ⟳ to reload ID."
+
+                except:
+                    # try loading id as item, then get parent folder 
+                    try:
+                        item = self.file_downloader.girder_client.getItem(girder_id_input)
+                        folder_id = item['folderId']
+                        location = self.file_downloader.girder_client.getFolder(folder_id)
+                        self.update_location(location)
+
+                        # change location success
+                        self.state.girder_id_error = False
+                        self.state.girder_id_success = True
+                        self.state.girder_id_hint = "Click ⟳ to reload ID."
+
+                        ## Auto select files
+                        # # self.state.flush()
+                        # async def select_item():
+                        #     await asyncio.sleep(1)
+                        #     self.select_item(item)
+                        #     self.state.flush()
+                        # # self.select_item(item)
+                        # create_task(select_item())
+
+                    except:
+                        self.state.girder_id_error = True
+                        self.state.girder_id_success = False
+                        self.state.girder_id_hint = "Error loading ID, click ⟳ to retry."
+
 
     def toggle_item(self, item):
         if item.get('_modelType') != 'item':

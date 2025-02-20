@@ -25,6 +25,7 @@ from vtk import (
     vtkNIFTIImageReader,
     vtkPiecewiseFunction,
     vtkPolyDataMapper,
+    vtkPolyDataReader,
     vtkResliceCursorLineRepresentation,
     vtkResliceCursorRepresentation,
     vtkResliceCursorWidget,
@@ -492,5 +493,11 @@ def load_mesh(file_path):
         transform_filter.Update()
 
         return transform_filter.GetOutput()
+    elif file_path.endswith(".vtk"):
+        reader = vtkPolyDataReader()
+        reader.SetFileName(file_path)
+        reader.Update()
+
+        return reader.GetOutput()
 
     raise Exception("File format is not handled for {}".format(file_path))
