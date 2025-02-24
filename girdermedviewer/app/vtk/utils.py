@@ -1,5 +1,7 @@
 import logging
 import math
+import os
+import xml.etree.ElementTree as ET
 
 from vtkmodules.all import (
     vtkCommand,
@@ -7,7 +9,6 @@ from vtkmodules.all import (
     vtkRenderWindow,
     vtkRenderWindowInteractor,
     vtkResliceImageViewer,
-    vtkInteractorStyleImage,
     vtkWidgetEvent
 )
 from vtk import (
@@ -15,6 +16,7 @@ from vtk import (
     vtkActor,
     vtkBoundingBox,
     vtkBox,
+    vtkColorSeries,
     vtkColorTransferFunction,
     vtkCutter,
     vtkImageReslice,
@@ -22,7 +24,9 @@ from vtk import (
     vtkImageSlice,
     vtkMath,
     vtkMatrix4x4,
+    vtkMetaImageReader,
     vtkNIFTIImageReader,
+    vtkNrrdReader,
     vtkPiecewiseFunction,
     vtkPolyDataMapper,
     vtkResliceCursorLineRepresentation,
@@ -70,6 +74,19 @@ def get_reslice_cursor(reslice_object):
     return reslice_object
 
 
+def get_reslice_cursor_representation(reslice_object):
+    """
+    Return the point where the 3 planes intersect.
+    :rtype tuple[float, float, float]
+    """
+    if isinstance(reslice_object, vtkResliceImageViewer):
+        reslice_object = reslice_object.GetResliceCursorWidget()
+    if isinstance(reslice_object, vtkResliceCursorWidget):
+        reslice_object = reslice_object.GetResliceCursorRepresentation()
+    assert reslice_object is None or reslice_object.IsA('vtkResliceCursorRepresentation')
+    return reslice_object
+
+
 def get_reslice_center(reslice_object):
     """
     Return the point where the 3 planes intersect.
@@ -101,7 +118,7 @@ def set_reslice_normal(reslice_object, new_normal, axis):
     return True
 
 
-def set_window_level(reslice_image_viewer, new_window_level):
+def set_reslice_window_level(reslice_image_viewer, new_window_level):
     if reslice_image_viewer is None:
         return False
     if (reslice_image_viewer.GetColorWindow() == new_window_level[0] and
@@ -112,10 +129,42 @@ def set_window_level(reslice_image_viewer, new_window_level):
     return True
 
 
+def get_reslice_window_level(reslice_image_viewer):
+    """
+    :param interactor_style reslice_image_viewer.GetInteractorStyle()
+    """
+    return (
+        reslice_image_viewer.GetColorWindow(),
+        reslice_image_viewer.GetColorLevel())
+
+
+def set_reslice_opacity(reslice_image_viewer, opacity):
+    logger.warning("not implemented")
+    return False
+    # reslice_representation = get_reslice_cursor_representation(reslice_image_viewer)
+    # if reslice_representation is None:
+    #     return False
+    # reslice_actor = reslice_representation.GetImageActor() => should be GetTexturedActor
+    # reslice_property = reslice_actor.GetProperty()
+    # if reslice_property.GetOpacity() == opacity:
+    #     return False
+    # reslice_property.SetOpacity(opacity)
+    # return True
+
+
 def reset_reslice(reslice_image_viewer):
-    center = reslice_image_viewer.input.center
-    reslice_image_viewer.GetResliceCursor().SetCenter(center)
-    reslice_image_viewer.GetResliceCursorWidget().ResetResliceCursor()
+    reslice_cursor = get_reslice_cursor(reslice_image_viewer)
+    if reslice_image_viewer.GetInput() is not None:
+        center = reslice_image_viewer.input.center
+        reslice_cursor.SetCenter(center)
+    # reslice_image_viewer.GetResliceCursorWidget().ResetResliceCursor()
+    reslice_cursor.GetPlane(0).SetNormal(-1, 0, 0)
+    reslice_cursor.SetXViewUp(0, 0, 1)
+    reslice_cursor.GetPlane(1).SetNormal(0, 1, 0)
+    reslice_cursor.SetYViewUp(0, 0, 1)
+    reslice_cursor.GetPlane(2).SetNormal(0, 0, -1)
+    reslice_cursor.SetZViewUp(0, 1, 0)
+
     reslice_image_viewer.GetRenderer().ResetCameraScreenSpace(0.8)
 
 
@@ -222,15 +271,6 @@ def get_reslice_image_viewer(axis=-1):
         return viewers[axis]
 
     reslice_image_viewer = vtkResliceImageViewer()
-    # is it the firstly created image viewer ?
-    if len(viewers) == 0:
-        reslice_cursor = get_reslice_cursor(reslice_image_viewer)
-        reslice_cursor.GetPlane(0).SetNormal(-1, 0, 0)
-        reslice_cursor.SetXViewUp(0, 0, -1)
-        reslice_cursor.GetPlane(1).SetNormal(0, 1, 0)
-        reslice_cursor.SetYViewUp(0, 0, -1)
-        reslice_cursor.GetPlane(2).SetNormal(0, 0, -1)
-        reslice_cursor.SetZViewUp(0, -1, 0)
 
     viewers[axis] = reslice_image_viewer
 
@@ -265,6 +305,9 @@ def render_volume_in_slice(image_data, renderer, axis=2, obliques=True):
 
     # (Oblique): Make all vtkResliceImageViewer instance share the same
     reslice_image_viewer.SetResliceCursor(get_reslice_image_viewer(-1).GetResliceCursor())
+
+    reset_reslice(reslice_image_viewer)
+
     for i in range(3):
         cursor_rep.GetResliceCursorActor() \
             .GetCenterlineProperty(i) \
@@ -316,15 +359,17 @@ def render_volume_as_overlay_in_slice(image_data, renderer, axis=2, opacity=0.8)
     image_slice = vtkImageSlice()
     image_slice.SetMapper(imageMapper)
     slice_property = image_slice.GetProperty()
+
     # actor.GetProperty().SetLookupTable(ColorTransferFunction)
     slice_property.SetInterpolationTypeToNearest()
-    slice_property.SetOpacity(opacity)
+
+    set_slice_opacity(image_slice, opacity)
 
     # vtkResliceImageViewer computes the default color window/level.
     # here we need to do it manually
     range = image_data.GetScalarRange()
-    slice_property.SetColorWindow(range[1] - range[0])
-    slice_property.SetColorLevel((range[0] + range[1]) / 2.0)
+    set_slice_window_level(image_slice, [
+        (range[1] - range[0]) / 2.0, (range[0] + range[1]) / 2.0])
 
     renderer.AddActor(image_slice)
 
@@ -332,6 +377,26 @@ def render_volume_as_overlay_in_slice(image_data, renderer, axis=2, opacity=0.8)
     renderer.ResetCameraScreenSpace(0.8)
 
     return image_slice
+
+
+def set_slice_opacity(image_slice, opacity):
+    if image_slice is None:
+        return False
+    if image_slice.GetProperty().GetOpacity() == opacity:
+        return False
+    image_slice.GetProperty().SetOpacity(opacity)
+    return True
+
+
+def set_slice_window_level(image_slice, window_level):
+    if image_slice is None:
+        return False
+    if (image_slice.GetProperty().GetColorWindow() == window_level[0] and
+            image_slice.GetProperty().GetColorLevel() == window_level[1]):
+        return False
+    image_slice.GetProperty().SetColorWindow(window_level[0])
+    image_slice.GetProperty().SetColorLevel(window_level[1])
+    return True
 
 
 def render_mesh_in_slice(poly_data, axis, renderer):
@@ -355,6 +420,22 @@ def render_mesh_in_slice(poly_data, axis, renderer):
     return actor
 
 
+def set_mesh_opacity(actor, opacity):
+    if actor.GetProperty().GetOpacity() == opacity:
+        return False
+    actor.GetProperty().SetOpacity(opacity)
+    return True
+
+
+def set_mesh_color(actor, color):
+    # oldColor = [0, 0, 0]
+    oldColor = actor.GetProperty().GetColor()
+    if oldColor == color:
+        return False
+    actor.GetProperty().SetColor(color)
+    return True
+
+
 def reset_3D(renderer):
     bounds = renderer.ComputeVisiblePropBounds()
     center = [0, 0, 0]
@@ -376,18 +457,11 @@ def render_volume_in_3D(image_data, renderer):
     volume_property.ShadeOn()
     volume_property.SetInterpolationTypeToLinear()
 
-    color_function = vtkColorTransferFunction()
-    color_function.AddRGBPoint(0, 0.0, 0.0, 0.0)  # Black
-    color_function.AddRGBPoint(100, 1.0, 0.5, 0.3)  # Orange
-    color_function.AddRGBPoint(255, 1.0, 1.0, 1.0)  # White
+    slicer_presets = os.path.join(os.path.dirname(__file__), "slicer_presets.xml")
 
-    opacity_function = vtkPiecewiseFunction()
-    opacity_function.AddPoint(0, 0.0)  # Transparent
-    opacity_function.AddPoint(100, 0.5)  # Semi-transparent
-    opacity_function.AddPoint(255, 1.0)  # Opaque
-
-    volume_property.SetColor(color_function)
-    volume_property.SetScalarOpacity(opacity_function)
+    parser = PresetParser(slicer_presets)
+    preset = parser.get_preset_by_name("CT-Cardiac3")
+    parser.apply_slicer_preset(preset, volume_property, image_data.GetScalarRange())
 
     volume = vtkVolume()
     volume.SetMapper(volume_mapper)
@@ -442,6 +516,10 @@ def create_rendering_pipeline():
     return renderer, render_window, interactor
 
 
+def supported_volume_extensions():
+    return (".nii", ".nii.gz", ".nrrd", ".mha")
+
+
 def load_volume(file_path):
     """Read a file and return a vtkImageData object"""
     logger.info(f"Loading volume {file_path}")
@@ -466,6 +544,18 @@ def load_volume(file_path):
         reslice.Update()
 
         return reslice.GetOutput()
+
+    if file_path.endswith(".nrrd"):
+        reader = vtkNrrdReader()
+        reader.SetFileName(file_path)
+        reader.Update()
+        return reader.GetOutput()
+
+    if file_path.endswith(".mha"):
+        reader = vtkMetaImageReader()
+        reader.SetFileName(file_path)
+        reader.Update()
+        return reader.GetOutput()
 
     raise Exception("File format is not handled for {}".format(file_path))
 
@@ -494,3 +584,209 @@ def load_mesh(file_path):
         return transform_filter.GetOutput()
 
     raise Exception("File format is not handled for {}".format(file_path))
+
+
+class PresetParser:
+    def __init__(self, presets):
+        if isinstance(presets, list):
+            self.presets = presets
+        else:
+            self.presets = PresetParser.parse_slicer_presets(presets)
+
+    def get_presets(self):
+        return self.presets
+
+    def get_preset_names(self):
+        return [preset.get("name") for preset in self.presets]
+
+    def get_preset_by_name(self, name):
+        preset = next((p for p in self.presets if p['name'] == name), None)
+        return preset
+
+    @staticmethod
+    def parse_slicer_presets(presets_file_path):
+        tree = ET.parse(presets_file_path)
+        root = tree.getroot()
+
+        presets = []
+        for vp in root.findall("VolumeProperty"):
+            preset = {}
+            for attr, value in vp.attrib.items():
+                preset[attr] = value
+
+            presets.append(preset)
+
+        return presets
+
+    @staticmethod
+    def string_to_array(string_of_numbers):
+        return list(map(float, string_of_numbers.split()))
+
+    @staticmethod
+    def string_to_color_transfer_function(string_of_numbers, range=None):
+        xrgbs = PresetParser.string_to_array(string_of_numbers)
+        return PresetParser.array_to_color_transfer_function(xrgbs, range)
+
+    @staticmethod
+    def array_to_color_transfer_function(xrgbs, range=None):
+        return PresetParser.array_to_function(xrgbs, range, vtkColorTransferFunction, "AddRGBPoint", 4)
+
+    @staticmethod
+    def array_to_function(xrgbs, array_range, klass, add_method, number_of_components):
+        number_of_expected_values = xrgbs.pop(0)
+        assert number_of_expected_values == len(xrgbs)
+        transfer_function = klass()
+        if array_range is not None:
+            orig_range = (xrgbs[0], xrgbs[-number_of_components])
+            orig_size = orig_range[1] - orig_range[0]
+            array_range_size = array_range[1] - array_range[0]
+        for i in range(0, len(xrgbs), number_of_components):
+            node = xrgbs[i:i + number_of_components]
+            if range is not None:
+                node[0] = array_range[0] + array_range_size * (node[0] - orig_range[0]) / orig_size
+            getattr(transfer_function, add_method)(*node)
+        return transfer_function
+
+    @staticmethod
+    def color_transfer_function_to_array(color_transfer_function):
+        """
+        :see-also array_to_color_transfer_function
+        """
+        size = color_transfer_function.GetSize()
+        node = [0, 0, 0, 0, 0, 0]
+        xrgbs = [4 * size]
+        for i in range(0, size):
+            color_transfer_function.GetNodeValue(i, node)
+            xrgbs += node[0:4]
+        return xrgbs
+
+    @staticmethod
+    def string_to_opacity_function(string_of_numbers, range=None):
+        opacities = PresetParser.string_to_array(string_of_numbers)
+        return PresetParser.array_to_opacity_function(opacities, range)
+
+    @staticmethod
+    def array_to_opacity_function(opacities, range=None):
+        return PresetParser.array_to_function(opacities, range, vtkPiecewiseFunction, "AddPoint", 2)
+
+    @staticmethod
+    def opacity_function_to_array(opacity_function):
+        """
+        :see-also array_to_opacity_function
+        """
+        size = opacity_function.GetSize()
+        node = [0, 0, 0, 0]
+        xrgbs = [2 * size]
+        for i in range(0, size):
+            opacity_function.GetNodeValue(i, node)
+            xrgbs += node[0:2]
+        return xrgbs
+
+    @staticmethod
+    def opacity_function_to_string(opacity_function):
+        opacity_array = PresetParser.opacity_function_to_array(opacity_function)
+        return " ".join(str(x) for x in opacity_array)
+
+    @staticmethod
+    def rerange(function, new_range):
+        new_size = new_range[1] - new_range[0]
+        old_range = function.GetRange()
+        old_size = old_range[1] - old_range[0]
+        node = [0, 0, 0, 0, 0, 0] if isinstance(function, vtkColorTransferFunction) else [0, 0, 0, 0]
+        # move first to the left
+        for i in range(function.GetSize()):
+            function.GetNodeValue(i, node)
+            new_x = new_range[0] + new_size * (node[0] - old_range[0]) / old_size
+            if node[0] < new_x:
+                break
+            node[0] = new_x
+            function.SetNodeValue(i, node)
+        # move to the right
+        for i in range(function.GetSize() - 1, i - 1, -1):
+            function.GetNodeValue(i, node)
+            new_x = new_range[0] + new_size * (node[0] - old_range[0]) / old_size
+            node[0] = new_x
+            function.SetNodeValue(i, node)
+
+    @staticmethod
+    def same_arrays(array_1, array_2, number_of_components):
+        array_1_size = array_1[0]
+        array_2_size = array_2[0]
+        if array_1_size != array_2_size:
+            return False
+        chunks1 = [lst[1:number_of_components] for lst in zip(*[iter(array_1[1:])] * number_of_components)]
+        chunks2 = [lst[1:number_of_components] for lst in zip(*[iter(array_2[1:])] * number_of_components)]
+
+        # Compare corresponding chunks
+        return [c1 == c2 for c1, c2 in zip(chunks1, chunks2)]
+
+    @staticmethod
+    def has_preset(volume_property, preset, range=None):
+        """
+        Returns true if the volume_property already has the preset applied.
+        """
+        if range is not None:
+            if volume_property.GetRGBTransferFunction().GetRange() != range:
+                return False
+        colors = PresetParser.color_transfer_function_to_array(volume_property.GetRGBTransferFunction())
+        preset_colors = PresetParser.string_to_array(preset.get("colorTransfer"))
+        if not PresetParser.same_arrays(colors, preset_colors, 4):
+            return False
+
+        opacities = PresetParser.opacity_function_to_array(volume_property.GetScalarOpacity())
+        preset_opacities = PresetParser.string_to_array(preset.get("scalarOpacity"))
+        if not PresetParser.same_arrays(opacities, preset_opacities, 2):
+            return False
+
+        return True
+
+    @staticmethod
+    def apply_slicer_preset(preset, volume_property, range=None):
+        """
+        :param range color and opacity range. Optional.
+        :type range list[float, float] | tuple[float, float] | None
+        """
+        if PresetParser.has_preset(volume_property, preset, range):
+            return False
+        color_transfer_function = PresetParser.string_to_color_transfer_function(
+            preset.get("colorTransfer"), range)
+        opacity_function = PresetParser.string_to_opacity_function(
+            preset.get("scalarOpacity"), range)
+        volume_property.SetColor(color_transfer_function)
+        volume_property.SetScalarOpacity(opacity_function)
+        if "ambient" in preset:
+            volume_property.SetAmbient(float(preset.get("ambient")))
+        if "diffuse" in preset:
+            volume_property.SetDiffuse(float(preset.get("diffuse")))
+        if "specular" in preset:
+            volume_property.SetSpecular(float(preset.get("specular")))
+        if "specularPower" in preset:
+            volume_property.SetSpecularPower(float(preset.get("specularPower")))
+        if "shade" in preset:
+            volume_property.SetShade(int(preset.get("shade")))
+        if "interpolation" in preset:
+            volume_property.SetInterpolationType(int(preset.get("interpolation")))
+        return True
+
+
+def get_presets():
+    slicer_presets = os.path.join(os.path.dirname(__file__), "slicer_presets.xml")
+    return PresetParser(slicer_presets).get_presets()
+
+
+color_series = vtkColorSeries()
+last_color_scheme = vtkColorSeries.BREWER_QUALITATIVE_SET1
+color_series.SetColorScheme(vtkColorSeries.BREWER_QUALITATIVE_SET1)
+last_color = 0
+
+
+def get_random_color():
+    global last_color_scheme
+    global last_color
+    if last_color >= color_series.GetNumberOfColors():
+        color_series.SetColorScheme(last_color_scheme)
+        last_color_scheme += 1
+        last_color = 0
+    color = color_series.GetColor(last_color)
+    last_color += 1
+    return "#{:02x}{:02x}{:02x}".format(*color)

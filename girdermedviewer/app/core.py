@@ -11,6 +11,9 @@ from trame.ui.vuetify import SinglePageWithDrawerLayout
 from trame.widgets.vuetify2 import (VTextField, VContainer, VCard, VDialog, VRow, VSpacer)
 from .girder.components import GirderDrawer
 from .vtk.components import QuadView, ToolsStrip
+from .vtk.utils import get_presets
+
+from .objects import Scene
 from .utils import Button, is_valid_url
 
 # ---------------------------------------------------------
@@ -22,6 +25,7 @@ from .utils import Button, is_valid_url
 class MyTrameApp:
     def __init__(self, server=None):
         self.server = get_server(server, client_type="vue2")
+        self.scene = Scene(self.server)
 
         self.load_config()
         self.configure_logs()
@@ -31,9 +35,8 @@ class MyTrameApp:
         self.state.obliques_visibility = True
         self.state.main_drawer = False
         self.state.user = None
-        self.state.file_loading_busy = False
-        self.state.displayed = []  # Items loaded and visible in the viewer
-        self.state.detailed = []  # Items for which detailed information is displayed
+        self.state.presets = get_presets()
+        self.state.selected = []  # Items loaded and visible in the viewer
         self.state.last_clicked = 0
         self.state.action_keys = [{"for": []}]
 
@@ -67,6 +70,7 @@ class MyTrameApp:
         self.state.girder_url = self.config.get("girder", "default_url", fallback=None)
 
         self.state.app_name = self.config.get("ui", "name", fallback="Girder Medical Viewer")
+        self.state.date_format = self.config.get("ui", "date_format", fallback="%Y-%m-%d")
 
         self.state.temp_dir = self.config.get("download", "directory", fallback=None)
         self.state.cache_mode = self.config.get("download", "cache_mode", fallback=None)
@@ -184,12 +188,11 @@ class MyTrameApp:
                     classes="fill-height d-flex flex-row flex-grow-1"
                 ):
                     ToolsStrip()
-                    qd = QuadView()
-                    self.quad_view = qd
+                    quadView = QuadView()
+                    self.scene.set_views(quadView.views)
 
             with self.ui.drawer:
                 GirderDrawer(
-                    self.quad_view,
                     v_if=("user",),
                 )
 

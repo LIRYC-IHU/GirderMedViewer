@@ -7,10 +7,10 @@ authors = [
 ]
 dependencies = [
     "girder-client==3.2.6",
-    "trame>=3.7.1",
+    "trame>=3.8.0",
     "trame-gwc==0.1.0",
     "trame-vuetify==2.7.1",
-    "trame-vtk==2.8.12",
+    "trame-vtk==2.8.15",
     "vtk==9.4.1"
 ]
 requires-python = ">=3.9"

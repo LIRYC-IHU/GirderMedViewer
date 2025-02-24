@@ -1,9 +1,12 @@
-import os
 from contextlib import contextmanager
+from datetime import datetime
 from enum import Enum
+import logging
+import os
+import sys
 from tempfile import TemporaryDirectory
 
-import logging
+logging.basicConfig(stream=sys.stdout)
 
 logger = logging.getLogger(__name__)
 
@@ -11,6 +14,10 @@ logger = logging.getLogger(__name__)
 def are_same_paths(path1, path2):
     return (os.path.normcase(os.path.realpath(os.path.abspath(path1))) ==
             os.path.normcase(os.path.realpath(os.path.abspath(path2))))
+
+
+def format_date(date_str, format):
+    return datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S.%f+00:00").strftime(format)
 
 
 class CacheMode(Enum):
@@ -61,6 +68,15 @@ class FileFetcher:
 
     def get_item_files(self, item):
         return self.girder_client.listFile(item["_id"])
+
+    def get_item_inherited_metadata(self, item):
+        parent_folder = self.girder_client.getFolder(item["folderId"])
+        metadata = parent_folder["meta"]
+        # Fetch metadata of all parents
+        while parent_folder["parentId"] != item["baseParentId"]:
+            parent_folder = self.girder_client.getFolder(parent_folder["parentId"])
+            metadata.update(parent_folder["meta"])
+        return metadata
 
     @contextmanager
     def fetch_file(self, file):
