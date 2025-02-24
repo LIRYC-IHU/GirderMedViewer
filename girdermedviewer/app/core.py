@@ -64,7 +64,7 @@ class MyTrameApp:
         self.config = ConfigParser()
         self.config.read(config_file_path)
 
-        self.state.girder_url = self.config.get("girder", "url", fallback=None)
+        self.state.girder_url = self.config.get("girder", "default_url", fallback=None)
 
         self.state.app_name = self.config.get("ui", "name", fallback="Girder Medical Viewer")
 
