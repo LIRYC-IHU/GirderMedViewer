@@ -153,9 +153,18 @@ def set_reslice_opacity(reslice_image_viewer, opacity):
 
 
 def reset_reslice(reslice_image_viewer):
-    center = reslice_image_viewer.input.center
-    reslice_image_viewer.GetResliceCursor().SetCenter(center)
-    reslice_image_viewer.GetResliceCursorWidget().ResetResliceCursor()
+    reslice_cursor = get_reslice_cursor(reslice_image_viewer)
+    if reslice_image_viewer.GetInput() is not None:
+        center = reslice_image_viewer.input.center
+        reslice_cursor.SetCenter(center)
+    # reslice_image_viewer.GetResliceCursorWidget().ResetResliceCursor()
+    reslice_cursor.GetPlane(0).SetNormal(-1, 0, 0)
+    reslice_cursor.SetXViewUp(0, 0, 1)
+    reslice_cursor.GetPlane(1).SetNormal(0, 1, 0)
+    reslice_cursor.SetYViewUp(0, 0, 1)
+    reslice_cursor.GetPlane(2).SetNormal(0, 0, -1)
+    reslice_cursor.SetZViewUp(0, 1, 0)
+
     reslice_image_viewer.GetRenderer().ResetCameraScreenSpace(0.8)
 
 
@@ -262,15 +271,6 @@ def get_reslice_image_viewer(axis=-1):
         return viewers[axis]
 
     reslice_image_viewer = vtkResliceImageViewer()
-    # is it the firstly created image viewer ?
-    if len(viewers) == 0:
-        reslice_cursor = get_reslice_cursor(reslice_image_viewer)
-        reslice_cursor.GetPlane(0).SetNormal(-1, 0, 0)
-        reslice_cursor.SetXViewUp(0, 0, -1)
-        reslice_cursor.GetPlane(1).SetNormal(0, 1, 0)
-        reslice_cursor.SetYViewUp(0, 0, -1)
-        reslice_cursor.GetPlane(2).SetNormal(0, 0, -1)
-        reslice_cursor.SetZViewUp(0, -1, 0)
 
     viewers[axis] = reslice_image_viewer
 
@@ -305,6 +305,9 @@ def render_volume_in_slice(image_data, renderer, axis=2, obliques=True):
 
     # (Oblique): Make all vtkResliceImageViewer instance share the same
     reslice_image_viewer.SetResliceCursor(get_reslice_image_viewer(-1).GetResliceCursor())
+
+    reset_reslice(reslice_image_viewer)
+
     for i in range(3):
         cursor_rep.GetResliceCursorActor() \
             .GetCenterlineProperty(i) \
