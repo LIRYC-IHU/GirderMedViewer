@@ -3,13 +3,27 @@ import logging
 import sys
 import traceback
 from time import time
+from trame.decorators import TrameApp, change
 from trame_server.utils.asynchronous import create_task
 from trame.widgets import gwc, client
 from trame.widgets.vuetify2 import (
-    VContainer, VRow, VCol, VExpansionPanels, VExpansionPanel, VSlider,
-    VExpansionPanelContent, VExpansionPanelHeader, VCard, VSubheader,
-    VListItem, VList, VDivider, VAutocomplete, VTextField, VColorPicker
-
+    VCard,
+    VCol,
+    VColorPicker,
+    VContainer,
+    VDivider,
+    VExpansionPanel,
+    VExpansionPanelContent,
+    VExpansionPanelHeader,
+    VExpansionPanels,
+    VList,
+    VListItem,
+    VRangeSlider,
+    VRow,
+    VSelect,
+    VSlider,
+    VSubheader,
+    VTextField,
 )
 from .utils import FileDownloader, CacheMode, format_date
 from ..utils import Button
@@ -117,9 +131,9 @@ class GirderFileSelector(gwc.GirderFileManager):
             await asyncio.sleep(1)
             try:
                 self.load_item(item)
+                item["loaded"] = True
             finally:
                 item["loading"] = False
-                item["loaded"] = True
                 self.state.dirty("selected")
                 self.state.flush()
 
@@ -139,7 +153,7 @@ class GirderFileSelector(gwc.GirderFileManager):
                     If so, please load a compressed archive."
                 )
             with self.file_downloader.download_file(files[0]) as file_path:
-                self.ctrl.load_files(file_path, item["_id"])
+                self.ctrl.load_file(file_path, item["_id"])
         except Exception:
             logger.error(f"Error loading file {item['_id']}: {traceback.format_exc()}")
             self.unselect_item(item)
@@ -168,6 +182,7 @@ class GirderFileSelector(gwc.GirderFileManager):
             self.set_token(None)
 
 
+@TrameApp()
 class GirderItemList(VCard):
     def __init__(self, **kwargs):
         super().__init__(
@@ -180,10 +195,19 @@ class GirderItemList(VCard):
     def _build_ui(self):
         with self:
             with VExpansionPanels(accordion=True, focusable=True, multiple=True):
-                GirderItemCard(
-                    v_for="item in selected",
-                    item="item"
-                )
+                with client.Getter(
+                    v_for="(item, i) in selected",
+                    key="item._id",
+                    name=("`${item._id}`",),
+                    key_name="data_id",
+                    value_name="object",
+                    update_nested_name="update_object",
+                ):
+                    GirderItemCard(
+                        item="item",
+                        key_name="object",
+                        value_name="object",
+                        update_name="update_object")
             with VCol(cols="auto"):
                 Button(
                     tooltip="Clear all",
@@ -191,18 +215,24 @@ class GirderItemList(VCard):
                     click=self.clear_views,
                 )
 
+    @change("selected")
+    def on_new_selection(self, **kwargs):
+        # Vue2 only: GirderClient must be re-created for v_for to be refreshed
+        self.clear()
+        self._build_ui()
+
     def clear_views(self):
         self.ctrl.clear()
         self.state.selected = []
 
 
 class GirderItemCard(VExpansionPanel):
-    def __init__(self, item, **kwargs):
-        super().__init__(
-            value=item,
-            **kwargs
-        )
+    def __init__(self, item, key_name, value_name, update_name, **kwargs):
+        super().__init__(**kwargs)
         self.item = item
+        self.key_name = key_name
+        self.value_name = value_name
+        self.update_name = update_name
         self._build_ui()
 
     def _build_ui(self):
@@ -221,7 +251,12 @@ class GirderItemCard(VExpansionPanel):
                         )
 
             with VExpansionPanelContent(v_if=(f"{self.item}.loaded",)):
-                ItemSettings(item=self.item)
+                ItemSettings(
+                    item=self.item,
+                    key_name=self.key_name,
+                    value_name=self.value_name,
+                    update_name=self.update_name
+                )
                 ItemInfo(item=self.item)
                 ItemMetadata(item=self.item)
 
@@ -232,98 +267,90 @@ class GirderItemCard(VExpansionPanel):
 
 
 class ItemSettings(VCard):
-    def __init__(self, item, **kwargs):
+    def __init__(self, item, key_name, value_name, update_name, **kwargs):
         super().__init__(**kwargs)
         self.item = item
+        self.key_name = key_name
+        self.value_name = value_name
+        self.update_name = update_name
         self._build_ui()
+
+    def get(self, prop, condition=""):
+        return (self.value_name + '.' + prop + condition,)
+
+    def set(self, prop):
+        return self.update_name + "('" + prop + "', $event)"
 
     def _build_ui(self):
         with self:
             with VList(dense=True, classes="pa-0"):
-                with VRow(no_gutters=True):
-                    with VCol(cols=2):
-                        VSubheader("Opacity", classes="subtitle-1 font-weight-bold pl-4")
+                with VRow(no_gutters=True,
+                          v_if=self.get("opacity", "!= -1")):
                     with VCol(cols=10):
                         with VListItem():
                             VSlider(
-                                value=("get(`opacity_${" + self.item + "._id}`)",),
-                                end="set(`opacity_${" + self.item + "._id}`, $event)",
+                                label='Opacity',
+                                value=self.get("opacity"),
+                                input=self.set("opacity"),
                                 min=0,
                                 max=1,
                                 step=0.05,
                                 thumb_label=True,
                             )
                 with VRow(
-                    v_if=("get(`preset_${" + self.item + "._id}`)",),
+                    v_if=self.get("preset"),
                     align="center",
                     no_gutters=True
                 ):
-                    with VCol(cols=2):
-                        VSubheader("Preset", classes="subtitle-1 font-weight-bold pl-4")
-                    with VCol(cols=10):
+                    with VCol(cols=12):
                         with VListItem():
-                            VAutocomplete(
+                            VSelect(
+                                label='Preset',
                                 items=("presets",),
-                                item_text="title",
-                                value=("get(`preset_${" + self.item + "._id}`)",),
-                                change="set(`preset_${" + self.item + "._id}`, $event)",
+                                item_text="name",
+                                value=self.get("preset"),
+                                change=self.set("preset"),
                             )
 
                         with VListItem():
                             with VRow(justify="space-between"):
                                 with VCol():
                                     VTextField(
-                                        value=("get(`preset_min_${" + self.item + "._id}`)",),
-                                        change="set(`preset_min_${" + self.item + "._id}`, $event)",
-                                        type="number"
+                                        value=self.get("preset_min"),
+                                        change=self.set("preset_min"),
+                                        type="number",
+                                        label="Min",
+                                        dense=True
                                     )
                                 with VCol():
                                     VTextField(
-                                        value=("get(`preset_max_${" + self.item + "._id}`)",),
-                                        change="set(`preset_max_${" + self.item + "._id}`, $event)",
-                                        type="number"
+                                        value=self.get("preset_max"),
+                                        change=self.set("preset_max"),
+                                        type="number",
+                                        label="Max",
+                                        dense=True,
                                     )
 
                 with VRow(
-                    v_if=("get(`window_${" + self.item + "._id}`)",),
+                    v_if=self.get("window_level_min_max"),
                     align="center",
                     no_gutters=True
                 ):
-                    with VCol(cols=2):
-                        VSubheader("Window", classes="subtitle-1 font-weight-bold pl-4")
-                    with VCol(cols=10):
+                    with VCol(cols=12):
                         with VListItem():
-                            VSlider(
-                                value=("get(`window_${" + self.item + "._id}`)",),
-                                end="set(`window_${" + self.item + "._id}`, $event)",
-                                min=0,
-                                max=("get(`range_max_${" + self.item + "._id}`)-get(`range_min_${" + self.item + "._id}`)",),
+                            VRangeSlider(
+                                label="Window Level",
+                                value=self.get("window_level_min_max"),
+                                input=self.set("window_level_min_max"),
+                                min=self.get("range_min"),
+                                max=self.get("range_max"),
                                 step=1,
                                 thumb_label=True,
                                 dense=True
                             )
 
                 with VRow(
-                    v_if=("get(`level_${" + self.item + "._id}`)",),
-                    align="center",
-                    no_gutters=True
-                ):
-                    with VCol(cols=2):
-                        VSubheader("Level", classes="subtitle-1 font-weight-bold pl-4")
-                    with VCol(cols=10):
-                        with VListItem():
-                            VSlider(
-                                value=("get(`level_${" + self.item + "._id}`)",),
-                                end="set(`level_${" + self.item + "._id}`, $event)",
-                                min=("get(`range_min_${" + self.item + "._id}`)",),
-                                max=("get(`range_max_${" + self.item + "._id}`)",),
-                                step=1,
-                                thumb_label=True,
-                                dense=True
-                            )
-
-                with VRow(
-                    v_if=("get(`color_${" + self.item + "._id}`)",),
+                    v_if=self.get("color"),
                     align="center",
                     no_gutters=True
                 ):
@@ -332,8 +359,8 @@ class ItemSettings(VCard):
                     with VCol(cols=10):
                         with VListItem():
                             VColorPicker(
-                                value=("get(`color_${" + self.item + "._id}`)",),
-                                input="set(`color_${" + self.item + "._id}`, $event)",
+                                value=self.get("color"),
+                                input=self.set("color"),
                                 hide_inputs=True,
                             )
 

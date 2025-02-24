@@ -12,9 +12,8 @@ from .utils import (
     get_position_from_slice_index,
     get_reslice_center,
     get_reslice_normals,
+    get_reslice_window_level,
     get_slice_index_from_position,
-    load_mesh,
-    load_volume,
     remove_prop,
     render_mesh_in_3D,
     render_mesh_in_slice,
@@ -23,12 +22,16 @@ from .utils import (
     render_volume_in_slice,
     reset_reslice,
     reset_3D,
+    set_mesh_opacity,
+    set_mesh_color,
     set_oblique_visibility,
     set_slice_opacity,
+    set_slice_window_level,
     set_reslice_center,
     set_reslice_normal,
     set_reslice_opacity,
-    set_window_level
+    set_reslice_window_level,
+    PresetParser
 )
 
 logging.basicConfig(stream=sys.stdout)
@@ -108,7 +111,6 @@ class ViewGutter(html.Div):
 
                     def _on_slice_view_modified(**kwargs):
                         with self.state as state:
-                            # logger.debug(f'on cursor {view.id} changed {view.get_slice_range()}: {view.get_slice()} {view.get_slice_range()} {state.position}')
                             range = view.get_slice_range()
                             state.update({
                                 slider_id.min_id: range[0],
@@ -146,9 +148,15 @@ class ViewGutter(html.Div):
 
 class VtkView(vtk.VtkRemoteView):
     """ Base class for VTK views """
-    def __init__(self, **kwargs):
+    def __init__(self, ref, **kwargs):
+        """ref is also used as id if no id is given. It can be used for CSS styling."""
         renderer, render_window, interactor = create_rendering_pipeline()
-        super().__init__(render_window, interactive_quality=80, **kwargs)
+        super().__init__(render_window,
+                         interactive_quality=80,
+                         interactive_ratio=1,
+                         id=kwargs.pop("id", None) or ref,
+                         ref=ref,  # avoids recreating a view when UI is rebuilt
+                         **kwargs)
         self.renderer = renderer
         self.render_window = render_window
         self.interactor = interactor
@@ -158,12 +166,23 @@ class VtkView(vtk.VtkRemoteView):
     def get_data_id(self, data):
         return next((key for key, value in self.data.items() if data in value), None)
 
+    def get_data(self, data_id):
+        data = self.data.get(data_id, [])
+        return data[0] if len(data) else None
+
+    def get_actors(self, data_id):
+        data = [self.data[data_id]] if data_id in self.data else self.data.values()
+        return [obj for objs in data for obj in objs if obj.IsA('vtkActor')]
+
     def register_data(self, data_id, data):
         # Associate data (typically an actor) to data_id so that it can be
         # removed when data_id is unregistered.
         self.data[data_id].append(data)
 
     def unregister_data(self, data_id, no_render=False, only_data=None):
+        """
+        :param only_data removes only the provided data if any, all associated if None
+        """
         for data in list(self.data[data_id]):
             if only_data is None or data == only_data:
                 remove_prop(self.renderer, data)
@@ -180,13 +199,25 @@ class VtkView(vtk.VtkRemoteView):
         if not no_render:
             self.update()
 
+    def remove_volume(self, data_id, no_render=False, only_data=None):
+        return self.unregister_data(data_id, no_render, only_data)
+
+    def remove_mesh(self, data_id, no_render=False, only_data=None):
+        return self.unregister_data(data_id, no_render, only_data)
+
     def set_mesh_opacity(self, data_id, opacity):
-        logger.debug(f"set_mesh_opacity({data_id}): {opacity}")
-        pass
+        modified = False
+        for actor in self.get_actors(data_id):
+            modified = set_mesh_opacity(actor, opacity) or modified
+        if modified is not False:
+            self.update()
 
     def set_mesh_color(self, data_id, color):
-        logger.debug(f"set_mesh_color({data_id}): {color}")
-        pass
+        modified = False
+        for actor in self.get_actors(data_id):
+            modified = set_mesh_color(actor, color) or modified
+        if modified is not False:
+            self.update()
 
 
 class Orientation(Enum):
@@ -200,8 +231,8 @@ class SliceView(VtkView):
     _debounced_flush_initialized = False
     DEBOUNCED_FLUSH = False
 
-    def __init__(self, orientation, **kwargs):
-        super().__init__(classes=f"slice {orientation.name.lower()}", **kwargs)
+    def __init__(self, orientation, ref, **kwargs):
+        super().__init__(ref=ref, classes=f"slice {orientation.name.lower()}", **kwargs)
         self.orientation = orientation
         if SliceView.DEBOUNCED_FLUSH and SliceView._debounced_flush_initialized is False:  # can't use hasattr here
             SliceView._debounced_flush_initialized = True
@@ -210,7 +241,6 @@ class SliceView(VtkView):
         self._build_ui()
 
         self.state.change("position", "normals")(self.on_cursor_changed)
-        self.state.change("window_level")(self.on_window_level_changed)
         self.state.change("obliques_visibility")(self.on_obliques_visibility_changed)
 
         # in addition to self.ctrl.view_update for any view:
@@ -244,16 +274,23 @@ class SliceView(VtkView):
         else:
             self.state.flush()
 
-    def get_reslice_image_viewer(self):
-        viewers = [obj for objs in self.data.values() for obj in objs if obj.IsA('vtkResliceImageViewer')]
-        assert len(viewers) <= 1
-        return viewers[0] if len(viewers) else None
+    def get_reslice_image_viewer(self, data_id=None):
+        """
+        Return the primary volume image viewer if any.
+        :param data_id if provided returns only if it matches data_id.
+        """
+        ids = [data_id] if data_id in self.data else self.data.keys()
+        data = [self.get_data(id) for id in ids if self.is_primary_volume(id)]
+        return data[0] if len(data) else None
 
-    def get_image_slices(self):
-        return [obj for objs in self.data.values() for obj in objs if obj.IsA('vtkImageSlice')]
+    def get_image_slices(self, data_id=None):
+        ids = [data_id] if data_id in self.data else self.data.keys()
+        data = [self.get_data(id) for id in ids if self.is_secondary_volume(id)]
+        return data
 
-    def get_mesh_slices(self):
-        return [obj for objs in self.data.values() for obj in objs if obj.IsA('vtkOpenGLActor')]
+    def get_mesh_slices(self, data_id=None):
+        data = [self.data[data_id]] if data_id in self.data else self.data.values()
+        return [obj for objs in data for obj in objs if obj.IsA('vtkActor')]
 
     def add_primary_volume(self, image_data, data_id=None):
         reslice_image_viewer = render_volume_in_slice(
@@ -302,6 +339,32 @@ class SliceView(VtkView):
         self.register_data(data_id, actor)
         self.update()
 
+    def is_primary_volume(self, data_id):
+        """
+        :see-also has_primary_volume, is_secondary_volume, get_reslice_image_viewer
+        """
+        data = self.get_data(data_id)
+        if not data:
+            return False
+        if data.IsA('vtkResliceImageViewer'):
+            return True
+        if data.IsA('vtkImageSlice'):
+            return False
+        return None
+
+    def is_secondary_volume(self, data_id):
+        """
+        :see-also is_primary_volume, get_image_slices
+        """
+        data = self.get_data(data_id)
+        if not data:
+            return False
+        if data.IsA('vtkImageSlice'):
+            return True
+        if data.IsA('vtkResliceImageViewer'):
+            return False
+        return None
+
     def has_primary_volume(self):
         return self.get_reslice_image_viewer() is not None
 
@@ -325,12 +388,38 @@ class SliceView(VtkView):
 
     def set_volume_opacity(self, data_id, opacity):
         logger.debug(f"set_volume_opacity({data_id}): {opacity}")
-        for data in list(self.data[data_id]):
-            if data.IsA('vtkImageSlice'):
-                set_slice_opacity(data, opacity)
-            elif data.IsA('vtkResliceImageViewer'):
-                set_reslice_opacity(data, opacity)
-        self.update()
+        modified = False
+        reslice_image_viewer = self.get_reslice_image_viewer(data_id)
+        if reslice_image_viewer is not None:
+            modified = set_reslice_opacity(reslice_image_viewer, opacity)
+        for slice in self.get_image_slices(data_id):
+            modified = set_slice_opacity(slice, opacity) or modified
+        if modified:
+            self.update()
+
+    def set_volume_window_level(self, data_id, window_level):
+        logger.debug(f"set_volume_window_level({data_id}): {window_level}")
+        modified = False
+        reslice_image_viewer = self.get_reslice_image_viewer(data_id)
+        if reslice_image_viewer is not None:
+            modified = set_reslice_window_level(reslice_image_viewer, window_level)
+        for slice in self.get_image_slices(data_id):
+            modified = set_slice_window_level(slice, window_level) or modified
+        if modified:
+            self.update()
+
+    def set_volume_window_level_min_max(self, data_id, window_level_min_max):
+        """
+        :see-also set_volume_window_level
+        """
+        if window_level_min_max is not None:
+            window = window_level_min_max[1] - window_level_min_max[0]
+            level = (window_level_min_max[0] + window_level_min_max[1]) / 2
+            self.set_volume_window_level(data_id, (window, level))
+
+    def on_window_leveling(self, interactor_style, event):
+        self.ctrl.window_level_changed_in_view(
+            get_reslice_window_level(self.get_reslice_image_viewer()))
 
     def on_slice_scroll(self, reslice_image_viewer, event):
         """
@@ -368,15 +457,6 @@ class SliceView(VtkView):
     def on_reslice_cursor_end_interaction(self, reslice_image_widget, event):
         self.state.flush()  # flush state.position
 
-    def on_window_leveling(self, interactor_style, event):
-        # Because it is called within a co-routine, window_level is not
-        # flushed right away.
-        # TODO: fetch primary volume id to change its window level
-        self.state.window_level = (
-            interactor_style.GetCurrentImageProperty().GetColorWindow(),
-            interactor_style.GetCurrentImageProperty().GetColorLevel())
-        self.flush()
-
     def on_cursor_changed(self, position, normals, **kwargs):
         set_reslice_center(self.get_reslice_image_viewer(), position)
         set_reslice_normal(self.get_reslice_image_viewer(), normals[self.orientation.value], self.orientation.value)
@@ -399,8 +479,9 @@ class SliceView(VtkView):
 
     def on_window_level_changed(self, window_level, **kwargs):
         logger.debug(f"set_window_level: {window_level}")
-        set_window_level(self.get_reslice_image_viewer(), window_level)
-        self.update()
+        modified = set_reslice_window_level(self.get_reslice_image_viewer(), window_level)
+        if modified:
+            self.update()
 
     def _build_ui(self):
         with self:
@@ -408,9 +489,12 @@ class SliceView(VtkView):
 
 
 class ThreeDView(VtkView):
-    def __init__(self, **kwargs):
-        super().__init__(classes="threed", **kwargs)
+    def __init__(self, ref, **kwargs):
+        super().__init__(ref, classes="threed", **kwargs)
         self._build_ui()
+
+    def get_volumes(self):
+        return [obj for objs in self.data.values() for obj in objs if obj.IsA('vtkVolume')]
 
     def add_volume(self, image_data, data_id=None):
         volume = render_volume_in_3D(
@@ -432,32 +516,19 @@ class ThreeDView(VtkView):
         reset_3D(self.renderer)
         self.update()
 
-    def set_volume_preset(self, data_id, preset, range):
-        logger.debug(f"set_volume_preset({data_id}): {preset}, {range}")
-        pass
+    def set_volume_preset(self, data_id, preset_name, range):
+        logger.debug(f"set_volume_preset({data_id}): {preset_name}, {range}")
+        preset = PresetParser(self.state.presets).get_preset_by_name(preset_name)
+        volume = self.get_data(data_id)
+        if volume is None:
+            return
+        modified = PresetParser.apply_slicer_preset(preset, volume.GetProperty(), range)
+        if modified:
+            self.update()
 
     def _build_ui(self):
         with self:
             ViewGutter(self)
-
-
-@dataclass
-class VolumeSettingsState:
-    opacity: str = None
-    window: str = None
-    level: str = None
-    preset: str = None
-    preset_min: str = None
-    preset_max: str = None
-    range_min: str = None
-    range_max: str = None
-    color: str = None
-
-
-@dataclass
-class MeshSettingsState:
-    opacity: str = None
-    color: str = None
 
 
 class QuadView(VContainer):
@@ -473,7 +544,6 @@ class QuadView(VContainer):
         self.ctrl.reset = self.reset
         self.ctrl.clear = self.clear
         self.ctrl.remove_data = self.remove_data
-        self.ctrl.load_files = self.load_files
 
     @property
     def twod_views(self):
@@ -498,83 +568,6 @@ class QuadView(VContainer):
             view.reset()
         self.ctrl.view_update()
 
-    def load_files(self, file_path, data_id=None):
-        logger.debug(f"Loading file {file_path}")
-        if file_path.endswith(".stl"):
-            poly_data = load_mesh(file_path)
-            for view in self.views:
-                view.add_mesh(poly_data, data_id)
-            self.connect_mesh_settings_to_state(data_id)
-        else:
-            image_data = load_volume(file_path)
-            for view in self.views:
-                view.add_volume(image_data, data_id)
-            self.connect_volume_settings_to_state(image_data, data_id)
-
-        self.ctrl.view_update()
-
-    def connect_volume_settings_to_state(self, data, data_id):
-        volume_settings = VolumeSettingsState(
-            opacity=f"opacity_{data_id}",
-            window=f"window_{data_id}",
-            level=f"level_{data_id}",
-            preset=f"preset_{data_id}",
-            preset_min=f"preset_min_{data_id}",
-            preset_max=f"preset_max_{data_id}",
-            range_min=f"range_min_{data_id}",
-            range_max=f"range_max_{data_id}",
-        )
-        scalar_range = data.GetScalarRange()
-        self.state[volume_settings.opacity] = 1
-        self.state[volume_settings.range_min], self.state[volume_settings.range_max] = scalar_range
-        self.state[volume_settings.window] = (scalar_range[0] + scalar_range[1]) / 2 - scalar_range[0]
-        self.state[volume_settings.level] = (scalar_range[0] + scalar_range[1]) / 2
-        self.state[volume_settings.preset] = self.state.presets[0]
-        self.state[volume_settings.preset_min], self.state[volume_settings.preset_max] = scalar_range
-        self.state.flush()
-
-        @self.state.change(volume_settings.opacity)
-        def _on_opacity_change(*_, **kwargs):
-            for view in self.twod_views:
-                view.set_volume_opacity(data_id, kwargs[volume_settings.opacity])
-
-        @self.state.change(volume_settings.window, volume_settings.level)
-        def _on_window_level_change(*_, **kwargs):
-            for view in self.twod_views:
-                view.set_volume_window_level(
-                    data_id,
-                    (kwargs[volume_settings.window], kwargs[volume_settings.level])
-                )
-
-        @self.state.change(volume_settings.preset, volume_settings.preset_min, volume_settings.preset_max)
-        def _on_preset_change(*_, **kwargs):
-            for view in self.threed_views:
-                view.set_volume_preset(
-                    data_id,
-                    kwargs[volume_settings.preset],
-                    (kwargs[volume_settings.preset_min], kwargs[volume_settings.preset_max]),
-                )
-
-    def connect_mesh_settings_to_state(self, data_id):
-        mesh_settings = MeshSettingsState(
-            opacity=f"opacity_{data_id}",
-            color=f"color_{data_id}"
-        )
-
-        self.state[mesh_settings.opacity] = 0.8
-        self.state[mesh_settings.color] = "#FF0000"
-        self.state.flush()
-
-        @self.state.change(mesh_settings.opacity)
-        def _on_opacity_change(*_, **kwargs):
-            for view in self.views:
-                view.set_mesh_opacity(data_id, kwargs[mesh_settings.opacity])
-
-        @self.state.change(mesh_settings.color)
-        def _on_color_change(*_, **kwargs):
-            for view in self.views:
-                view.set_mesh_color(data_id, kwargs[mesh_settings.color])
-
     def _build_ui(self):
         with self:
             with html.Div(
@@ -588,15 +581,15 @@ class QuadView(VContainer):
                        }""",),
             ):
                 with SliceView(Orientation.SAGITTAL,
-                               id="sag_view",
+                               ref="sag_view",
                                v_if="fullscreen == null || fullscreen == 'sag_view'") as sag_view:
                     self.views.append(sag_view)
-                with ThreeDView(id="threed_view",
+                with ThreeDView(ref="threed_view",
                                 v_if="fullscreen == null || fullscreen == 'threed_view'") as threed_view:
                     self.views.append(threed_view)
-                with SliceView(Orientation.CORONAL, id="cor_view",
+                with SliceView(Orientation.CORONAL, ref="cor_view",
                                v_if="fullscreen == null || fullscreen == 'cor_view'") as cor_view:
                     self.views.append(cor_view)
-                with SliceView(Orientation.AXIAL, id="ax_view",
+                with SliceView(Orientation.AXIAL, ref="ax_view",
                                v_if="fullscreen == null || fullscreen == 'ax_view'") as ax_view:
                     self.views.append(ax_view)

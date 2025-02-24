@@ -9,7 +9,9 @@ from trame.ui.vuetify import SinglePageWithDrawerLayout
 from trame.widgets.vuetify2 import (VContainer, VRow, VCol, VBtn, VCard, VIcon)
 from .girder.components import GirderDrawer
 from .vtk.components import QuadView, ToolsStrip
-import xml.etree.ElementTree as ET
+from .vtk.utils import get_presets
+
+from .objects import Scene
 
 # ---------------------------------------------------------
 # Engine class
@@ -20,6 +22,7 @@ import xml.etree.ElementTree as ET
 class MyTrameApp:
     def __init__(self, server=None):
         self.server = get_server(server, client_type="vue2")
+        self.scene = Scene(self.server)
 
         self.load_config()
 
@@ -31,7 +34,7 @@ class MyTrameApp:
         self.state.obliques_visibility = True
         self.state.main_drawer = False
         self.state.user = None
-        self.state.presets = self.get_presets()
+        self.state.presets = get_presets()
         self.state.selected = []  # Items loaded and visible in the viewer
         self.state.last_clicked = 0
         self.state.action_keys = [{"for": []}]
@@ -47,19 +50,6 @@ class MyTrameApp:
     @property
     def ctrl(self):
         return self.server.controller
-
-    def get_presets(self):
-        #TODO: to adapt with last PR
-        xml_file = "/home/justineantoine/KITWARE/PROJECTS/INRIA/GirderMedViewer/resources/presets.xml"
-        tree = ET.parse(xml_file)
-        root = tree.getroot()
-
-        presets = [
-            {
-                "title": vp.get("name")
-            } for vp in root.findall(".//VolumeProperty")
-        ]
-        return presets
 
     def load_config(self, config_file_path=None):
         """
@@ -155,7 +145,8 @@ class MyTrameApp:
                     classes="fill-height d-flex flex-row flex-grow-1"
                 ):
                     ToolsStrip()
-                    QuadView()
+                    quadView = QuadView()
+                    self.scene.set_views(quadView.views)
 
             with layout.drawer:
                 GirderDrawer()
