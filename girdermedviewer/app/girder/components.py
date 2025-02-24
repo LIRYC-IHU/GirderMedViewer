@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import sys
 import traceback
 from time import time
 from trame.decorators import TrameApp, change
@@ -25,13 +24,11 @@ from trame.widgets.vuetify2 import (
     VSubheader,
     VTextField,
 )
-from .utils import FileDownloader, CacheMode, format_date
+from .utils import FileFetcher, CacheMode, format_date
 from ..utils import Button
 from girder_client import GirderClient
 
-logging.basicConfig(stream=sys.stdout)
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 
 class GirderDrawer(VContainer):
@@ -73,7 +70,15 @@ class GirderFileSelector(gwc.GirderFileManager):
         self.state.selected_in_location = []
         girder_client = GirderClient(apiUrl=self.state.api_url)
         cache_mode = CacheMode(self.state.cache_mode) if self.state.cache_mode else CacheMode.No
-        self.file_downloader = FileDownloader(girder_client, self.state.temp_dir, cache_mode)
+        self.file_fetcher = FileFetcher(
+            girder_client,
+            self.state.assetstore_dir,
+            self.state.temp_dir,
+            cache_mode
+        )
+        # FIXME do not use global variable
+        global file_selector
+        file_selector = self
 
         self.state.change("location", "selected")(self.on_location_changed)
         self.state.change("api_url")(self.set_api_url)
@@ -113,7 +118,7 @@ class GirderFileSelector(gwc.GirderFileManager):
         assert item.get('_modelType') == 'item', "Only item can be selected"
         item["humanCreated"] = format_date(item["created"], self.state.date_format)
         item["humanUpdated"] = format_date(item["updated"], self.state.date_format)
-        item["parentMeta"] = self.file_downloader.get_item_inherited_metadata(item)
+        item["parentMeta"] = self.file_fetcher.get_item_inherited_metadata(item)
         item["loading"] = False
         item["loaded"] = False
 
@@ -140,11 +145,10 @@ class GirderFileSelector(gwc.GirderFileManager):
         create_task(load())
 
     def load_item(self, item):
-        logger.debug(f"Loading files {item}")
+        logger.debug(f"Loading item {item}")
         try:
-            logger.debug("Listing files")
-            files = list(self.file_downloader.get_item_files(item))
-            logger.debug(f"Files {files}")
+            files = list(self.file_fetcher.get_item_files(item))
+            logger.debug(f"Files to load: {files}")
             if len(files) != 1:
                 raise Exception(
                     "No file to load. Please check the selected item."
@@ -152,7 +156,7 @@ class GirderFileSelector(gwc.GirderFileManager):
                     "You are trying to load more than one file. \
                     If so, please load a compressed archive."
                 )
-            with self.file_downloader.download_file(files[0]) as file_path:
+            with self.file_fetcher.fetch_file(files[0]) as file_path:
                 self.ctrl.load_file(file_path, item["_id"])
         except Exception:
             logger.error(f"Error loading file {item['_id']}: {traceback.format_exc()}")
@@ -160,10 +164,10 @@ class GirderFileSelector(gwc.GirderFileManager):
 
     def set_api_url(self, api_url, **kwargs):
         logger.debug(f"Setting api_url to {api_url}")
-        self.file_downloader.girder_client = GirderClient(apiUrl=api_url)
+        self.file_fetcher.girder_client = GirderClient(apiUrl=api_url)
 
     def set_token(self, token):
-        self.file_downloader.girder_client.setToken(token)
+        self.file_fetcher.girder_client.setToken(token)
 
     def on_location_changed(self, **kwargs):
         logger.debug(f"Location/Selected changed to {self.state.location}/{self.state.selected}")

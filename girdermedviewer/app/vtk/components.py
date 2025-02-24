@@ -1,8 +1,8 @@
+import logging
+
 from collections import defaultdict
 from dataclasses import dataclass
 from enum import Enum
-import logging
-import sys
 from trame.widgets import html, vtk, client
 from trame.widgets.vuetify2 import (VContainer, VCheckbox, VSlider)
 from ..utils import debounce, Button
@@ -34,9 +34,7 @@ from .utils import (
     PresetParser
 )
 
-logging.basicConfig(stream=sys.stdout)
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 
 class ToolsStrip(html.Div):
