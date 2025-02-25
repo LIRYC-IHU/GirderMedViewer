@@ -63,10 +63,10 @@ class PositionDialog(VMenu):
             with Template(v_slot_activator="{ on: menu }"):
                 Button(
                     tooltip=("{{ position_dialog ? 'Hide position dialog' : 'Show position dialog' }}",),
-                    icon="mdi-target",
+                    icon_value="mdi-target",
+                    icon_color=("position_dialog ? 'primary' : 'black'",),
                     disabled=("selected.length === 0",),
                     v_on="menu",
-                    icon_color=("position_dialog ? 'primary' : 'black'",),
                 )
             with VCard(v_if=("position && selected.length > 0",)), VCardText():
                 with VRow(align="center", justify="space-between"):
@@ -102,14 +102,14 @@ class ToolsStrip(html.Div):
         with self:
             Button(
                 tooltip=("{{ obliques_visibility ? 'Hide obliques' : 'Show obliques' }}",),
-                icon=("{{ obliques_visibility ? 'mdi-eye-remove-outline' : 'mdi-eye-outline' }}",),
+                icon_value=("{{ obliques_visibility ? 'mdi-eye-remove-outline' : 'mdi-eye-outline' }}",),
                 click="obliques_visibility = !obliques_visibility",
                 disabled=("selected.length === 0",),
             )
 
             Button(
                 tooltip="Reset views",
-                icon="mdi-camera-flip-outline",
+                icon_value="mdi-camera-flip-outline",
                 click=self.ctrl.reset,
                 disabled=("selected.length === 0",)
             )
@@ -150,7 +150,7 @@ class ViewGutter(html.Div):
             ):
                 Button(
                     tooltip=("{{ fullscreen==null ? 'Extend to fullscreen' : 'Exit fullscreen' }}",),
-                    icon=("{{ fullscreen==null ? 'mdi-fullscreen' : 'mdi-fullscreen-exit' }}",),
+                    icon_value=("{{ fullscreen==null ? 'mdi-fullscreen' : 'mdi-fullscreen-exit' }}",),
                     icon_color="white",
                     click=self.toggle_fullscreen,
                 )

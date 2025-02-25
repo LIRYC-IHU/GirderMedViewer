@@ -5,8 +5,10 @@ from time import time
 from trame.decorators import TrameApp, change
 from trame_server.utils.asynchronous import create_task
 from trame.widgets import gwc, client
+from trame.widgets.html import Label
 from trame.widgets.vuetify2 import (
     VCard,
+    VCardText,
     VCol,
     VColorPicker,
     VContainer,
@@ -15,14 +17,17 @@ from trame.widgets.vuetify2 import (
     VExpansionPanelContent,
     VExpansionPanelHeader,
     VExpansionPanels,
+    VItem,
+    VItemGroup,
     VList,
     VListItem,
     VRangeSlider,
     VRow,
     VSelect,
     VSlider,
-    VSubheader,
     VTextField,
+    VWindow,
+    VWindowItem,
 )
 from .utils import FileFetcher, CacheMode, format_date
 from ..utils import Button
@@ -42,7 +47,7 @@ class GirderDrawer(VContainer):
     def _build_ui(self):
         with self:
             with VRow(
-                style="height:100%",
+                classes="fill-height ma-0",
                 align_content="start",
                 justify="center",
                 dense=True
@@ -192,8 +197,11 @@ class GirderItemList(VCard):
         super().__init__(
             **kwargs
         )
-        client.Style(".v-expansion-panel-content__wrap { padding: 0 !important; };"
-                     ".list-item {}")
+        client.Style(
+            ".v-expansion-panel-content__wrap { padding: 0 !important }"
+            ".v-card__text { padding: 5px 15px !important }"
+            ".v-messages { display: none }"
+            ".v-list--dense .v-list-item, .v-list-item--dense { min-height: 35px !important; padding: 4px 0px }")
         self._build_ui()
 
     def _build_ui(self):
@@ -215,7 +223,7 @@ class GirderItemList(VCard):
             with VCol(cols="auto"):
                 Button(
                     tooltip="Clear all",
-                    icon="mdi-delete",
+                    icon_value="mdi-delete",
                     click=self.clear_views,
                 )
 
@@ -246,28 +254,59 @@ class GirderItemCard(VExpansionPanel):
                     VCol("{{ " + self.item + ".name }}")
                     with VCol(classes="d-flex justify-end",):
                         Button(
-                            tooltip="Delete item",
-                            icon="mdi-delete",
+                            icon_value="",
                             loading=(f"{self.item}.loading",),
-                            disabled=(f"{self.item}.loading",),
-                            click_native_stop=(self.delete_item, f"[{self.item}._id]"),
-                            __events=[("click_native_stop", "click.native.stop")]
                         )
 
-            with VExpansionPanelContent(v_if=(f"{self.item}.loaded",)):
-                ItemSettings(
-                    item=self.item,
-                    key_name=self.key_name,
-                    value_name=self.value_name,
-                    update_name=self.update_name
-                )
-                ItemInfo(item=self.item)
-                ItemMetadata(item=self.item)
+            with VExpansionPanelContent(
+                v_if=(f"{self.item}.loaded",),
+            ):
+                with VRow(
+                    justify="center",
+                    classes="ma-1"
+                ), VItemGroup(
+                    v_model=(f"{self.item}.window",),
+                    mandatory=True,
+                ):
+                    with VItem(
+                        v_for="(card, n) in ['settings', 'info', 'metadata']",
+                        v_slot="{ active }",
+                        __properties=[("v_slot", "v-slot")],
+                    ):
+                        Button(
+                            input_value="active",
+                            text_value="{{ card }}",
+                            text=True,
+                            size=5,
+                            color=("active ? 'primary' : 'grey'",),
+                            click=(self.toggle_window, f"[n, {self.item}._id]"),
+                        )
 
-    def delete_item(self, item_id):
-        # redundant with GirdeFileSelector unselect_item
-        self.state.selected = [i for i in self.state.selected if i["_id"] != item_id]
-        self.ctrl.remove_data(item_id)
+                with VWindow(
+                    v_model=(f"{self.item}.window",),
+                ):
+                    with VWindowItem():
+                        ItemSettings(
+                            item=self.item,
+                            key_name=self.key_name,
+                            value_name=self.value_name,
+                            update_name=self.update_name
+                        )
+                    with VWindowItem():
+                        ItemInfo(item=self.item)
+                    with VWindowItem():
+                        ItemMetadata(item=self.item)
+
+    def toggle_window(self, window_id, item_id):
+        temp_selected = []
+        for i in self.state.selected:
+            if i["_id"] == item_id:
+                temp_item = {**i}
+                temp_item["window"] = window_id
+                temp_selected.append(temp_item)
+            else:
+                temp_selected.append(i)
+        self.state.selected = temp_selected
 
 
 class ItemSettings(VCard):
@@ -286,21 +325,8 @@ class ItemSettings(VCard):
         return self.update_name + "('" + prop + "', $event)"
 
     def _build_ui(self):
-        with self:
+        with self, VCardText():
             with VList(dense=True, classes="pa-0"):
-                with VRow(no_gutters=True,
-                          v_if=self.get("opacity", "!= -1")):
-                    with VCol(cols=10):
-                        with VListItem():
-                            VSlider(
-                                label='Opacity',
-                                value=self.get("opacity"),
-                                input=self.set("opacity"),
-                                min=0,
-                                max=1,
-                                step=0.05,
-                                thumb_label=True,
-                            )
                 with VRow(
                     v_if=self.get("preset"),
                     align="center",
@@ -338,7 +364,7 @@ class ItemSettings(VCard):
                 with VRow(
                     v_if=self.get("window_level_min_max"),
                     align="center",
-                    no_gutters=True
+                    no_gutters=True,
                 ):
                     with VCol(cols=12):
                         with VListItem():
@@ -354,12 +380,29 @@ class ItemSettings(VCard):
                             )
 
                 with VRow(
+                    v_if=self.get("opacity", "!= -1"),
+                    align="center",
+                    no_gutters=True,
+                ):
+                    with VCol(cols=12):
+                        with VListItem():
+                            VSlider(
+                                label='Opacity',
+                                value=self.get("opacity"),
+                                input=self.set("opacity"),
+                                min=0,
+                                max=1,
+                                step=0.05,
+                                thumb_label=True,
+                            )
+
+                with VRow(
                     v_if=self.get("color"),
                     align="center",
-                    no_gutters=True
+                    no_gutters=True,
                 ):
                     with VCol(cols=2):
-                        VSubheader("Color", classes="subtitle-1 font-weight-bold pl-4")
+                        Label("Color", classes="v-label theme--light")
                     with VCol(cols=10):
                         with VListItem():
                             VColorPicker(
@@ -367,6 +410,21 @@ class ItemSettings(VCard):
                                 input=self.set("color"),
                                 hide_inputs=True,
                             )
+
+                with VRow(
+                    align="center",
+                    no_gutters=True,
+                ), VCol(classes="d-flex justify-end pa-1",):
+                    Button(
+                        text_value="Delete",
+                        text_color="white",
+                        color="error",
+                        click=(self.delete_item, f"[{self.item}._id]")
+                    )
+
+    def delete_item(self, item_id):
+        self.state.selected = [i for i in self.state.selected if i["_id"] != item_id]
+        self.ctrl.remove_data(item_id)
 
 
 class ItemInfo(VCard):
@@ -376,8 +434,7 @@ class ItemInfo(VCard):
         self._build_ui()
 
     def _build_ui(self):
-        with self:
-            VSubheader("Info", classes="subtitle-1 font-weight-bold")
+        with self, VCardText():
             with VList(dense=True, classes="pa-0", subheader=True):
                 VListItem(
                     "Size: {{ " + self.item + ".humanSize}}",
@@ -400,12 +457,11 @@ class ItemMetadata(VCard):
         self._build_ui()
 
     def _build_ui(self):
-        with self:
-            VSubheader("Metadata", classes="subtitle-1 font-weight-bold pl-4")
+        with self, VCardText():
             with VList(dense=True, classes="pa-0", subheader=True):
-                with VRow(no_gutters=True), VCol(
+                with VRow(dense=True), VCol(
                     cols=6,
-                    v_for=f"(value, key) in {self.item}.meta"
+                    v_for=f"(value, key) in {self.item}.meta",
                 ):
                     with VListItem(classes="fill-height py-1 body-2"):
                         with VRow(align="center", justify="space-between", no_gutters=True):
@@ -423,7 +479,7 @@ class ItemMetadata(VCard):
                     v_if=(f"Object.keys({self.item}.parentMeta).length > 0 && \
                           Object.keys({self.item}.meta).length > 0"))
 
-                with VRow(no_gutters=True), VCol(
+                with VRow(dense=True), VCol(
                     cols=6,
                     v_for=f"(value, key) in {self.item}.parentMeta",
                 ):

@@ -167,15 +167,15 @@ class MyTrameApp:
                 Button(
                     v_if=("user",),
                     tooltip="Log out",
-                    text="{{ user_name }}",
-                    icon="mdi-logout",
+                    text_value="{{ user_name }}",
+                    icon_value="mdi-logout",
                     large=True,
                     click=self.ctrl.provider_logout,
                 )
                 Button(
                     v_if=("!user",),
-                    text="Login",
-                    icon="mdi-login",
+                    text_value="Login",
+                    icon_value="mdi-login",
                     large=True,
                     click="display_login_dialog = !display_login_dialog",
                     disabled=("!girder_connected",),
