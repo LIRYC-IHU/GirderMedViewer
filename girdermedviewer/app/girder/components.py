@@ -99,9 +99,7 @@ class GirderFileSelector(gwc.GirderFileManager):
         self.state.last_clicked = clicked_time
         is_selected = item["_id"] in [i["_id"] for i in self.state.selected]
         logger.debug(f"Toggle item {item} selected={is_selected}")
-        if is_selected:
-            self.unselect_item(item)
-        else:
+        if not is_selected:
             self.select_item(item)
 
     def update_location(self, new_location):
@@ -199,9 +197,8 @@ class GirderItemList(VCard):
         )
         client.Style(
             ".v-expansion-panel-content__wrap { padding: 0 !important }"
-            ".v-card__text { padding: 5px 15px !important }"
             ".v-messages { display: none }"
-            ".v-list--dense .v-list-item, .v-list-item--dense { min-height: 35px !important; padding: 4px 0px }")
+            ".v-list--dense .v-list-item, .v-list-item--dense { min-height: 30px !important; padding: 4px 0px }")
         self._build_ui()
 
     def _build_ui(self):
@@ -220,22 +217,12 @@ class GirderItemList(VCard):
                         key_name="object",
                         value_name="object",
                         update_name="update_object")
-            with VCol(cols="auto"):
-                Button(
-                    tooltip="Clear all",
-                    icon_value="mdi-delete",
-                    click=self.clear_views,
-                )
 
     @change("selected")
     def on_new_selection(self, **kwargs):
         # Vue2 only: GirderClient must be re-created for v_for to be refreshed
         self.clear()
         self._build_ui()
-
-    def clear_views(self):
-        self.ctrl.clear()
-        self.state.selected = []
 
 
 class GirderItemCard(VExpansionPanel):
@@ -277,7 +264,6 @@ class GirderItemCard(VExpansionPanel):
                             input_value="active",
                             text_value="{{ card }}",
                             text=True,
-                            size=5,
                             color=("active ? 'primary' : 'grey'",),
                             click=(self.toggle_window, f"[n, {self.item}._id]"),
                         )
@@ -417,7 +403,6 @@ class ItemSettings(VCard):
                 ), VCol(classes="d-flex justify-end pa-1",):
                     Button(
                         text_value="Delete",
-                        text_color="white",
                         color="error",
                         click=(self.delete_item, f"[{self.item}._id]")
                     )

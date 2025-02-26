@@ -245,13 +245,6 @@ class VtkView(vtk.VtkRemoteView):
         if not no_render:
             self.update()
 
-    def unregister_all_data(self, no_render=False):
-        data_ids = list(self.data.keys())
-        for data_id in data_ids:
-            self.unregister_data(data_id, True)
-        if not no_render:
-            self.update()
-
     def remove_volume(self, data_id, no_render=False, only_data=None):
         return self.unregister_data(data_id, no_render, only_data)
 
@@ -596,7 +589,6 @@ class QuadView(VContainer):
         self.state.fullscreen = None
         self._build_ui()
         self.ctrl.reset = self.reset
-        self.ctrl.clear = self.clear
         self.ctrl.remove_data = self.remove_data
 
     @property
@@ -610,11 +602,6 @@ class QuadView(VContainer):
     def remove_data(self, data_id=None):
         for view in self.views:
             view.unregister_data(data_id)
-        self.ctrl.view_update()
-
-    def clear(self):
-        for view in self.views:
-            view.unregister_all_data()
         self.ctrl.view_update()
 
     def reset(self):
