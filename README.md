@@ -23,6 +23,11 @@ girdermedviewer
 ```
 You can add ```--server``` to your command line to prevent your browser from opening and ```--port``` to specifiy the port the server should listen to, default is 8080.
 
+## Deploy Girder plugin to avoid download
+You can add the [GirderMedViewer Plugin](./utils/girdermedviewer_plugin) to your Girder to allow the Trame app to access the paths of the Girder files stored in assetstores. Therefore the Girder files do not need to be downloaded and can be read directly from the Girder assetstores whose paths have been specified in the configuration file (`app.cfg`).
+
+Follow the [plugin README](./utils/girdermedviewer_plugin/README.md) to install it.
+
 ## Deploy without launcher
 ```
 python -m trame.tools.serve --exec girdermedviewer.app.core:MyTrameApp
