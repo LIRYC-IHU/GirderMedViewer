@@ -13,7 +13,6 @@ from .vtk.utils import (
 class Scene:
     def __init__(self, server):
         self.server = server
-        self.state.elements = []
         self.ctrl.load_file = self.load_file
         self.objects = []
         self.views = []
@@ -31,11 +30,19 @@ class Scene:
 
     @change("selected")
     def on_selected_changed(self, selected, **kwargs):
-        for item in selected:
-            object = self.get_object(item["_id"])
+        # Add new items
+        for item_id in selected.keys():
+            object = self.get_object(item_id)
             if object is None:
-                object = SceneObject(self.server, item["_id"], None, self.views)
+                object = SceneObject(self.server, item_id, None, self.views)
                 self.objects.append(object)
+
+        # Remove deleted items
+        # for obj in self.objects:
+        #     if obj.id not in selected.keys():
+        #         self.objects.remove(obj)
+        #         obj.reset()
+        #         del obj
 
     @controller.set("load_file")
     def load_file(self, file_path, data_id=None):
@@ -70,7 +77,6 @@ class Scene:
 
 @TrameApp()
 class SceneObject:
-
     def __init__(self, server, id, data_type, views):
         self.server = server
         self.id = id
@@ -82,7 +88,6 @@ class SceneObject:
             "id": id,
             "type": data_type,
             "opacity": 1.0,
-            "loading": False,
             "loaded": False,
         }
         self.state.dirty(id)
@@ -153,23 +158,12 @@ class SceneObject:
         self.views = views
 
     @property
-    def loading(self):
-        return self.state[self.id]["loading"]
-
-    @loading.setter
-    def loading(self, value):
-        self.state[self.id]["loading"] = value
-        self.state.dirty(self.id)
-
-    @property
     def loaded(self):
         return self.state[self.id]["loaded"]
 
     @loaded.setter
     def loaded(self, value):
         self.state[self.id]["loaded"] = value
-        if value is True:
-            self.loading = False
         self.state.dirty(self.id)
 
     @property
@@ -190,8 +184,6 @@ class Volume(SceneObject):
         self.state.change(self.id)(self._on_change)
 
     def load(self, file_path):
-        self.loading = True
-
         self.data = load_volume(file_path)
 
         scalar_range = self.data.GetScalarRange()
@@ -203,7 +195,6 @@ class Volume(SceneObject):
         self.preset_range = scalar_range
 
         self._on_change()
-
         super().load(file_path)
 
     def _add_to_view(self, view):
@@ -304,7 +295,6 @@ class Mesh(SceneObject):
         self.state.change(self.id)(self._on_change)
 
     def load(self, file_path):
-        self.loading = True
         self.data = load_mesh(file_path)
         self.color = get_random_color()
         self._on_change()

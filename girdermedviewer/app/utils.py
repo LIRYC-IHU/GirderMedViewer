@@ -3,22 +3,24 @@ import requests
 from functools import wraps
 from math import floor
 from trame.widgets.html import Span
-from trame.widgets.vuetify2 import (VTooltip, Template, VBtn, VIcon)
-from typing import Callable, Optional
+from trame.widgets.vuetify2 import (Template, VBtn, VIcon, VProgressCircular, VTooltip)
+from typing import Callable, Optional, Union
 
 
 class Button():
     def __init__(
         self,
         *,
-        tooltip: str = None,
-        text_value: str = None,
-        text_color: str = None,
-        icon_value: str = None,
-        icon_color: str = None,
+        tooltip: Optional[str] = None,
+        text_value: Optional[str] = None,
+        text_color: Optional[str] = None,
+        icon_value: Optional[str] = None,
+        icon_color: Optional[str] = None,
+        loading: Optional[Union[bool, tuple]] = None,
+        loading_color: Optional[str] = None,
         click: Optional[Callable] = None,
-        size: int = 40,
-        v_on: str = None,
+        size: Optional[int] = 40,
+        v_on: Optional[str] = None,
         **kwargs,
     ) -> None:
         if not "rounded" in kwargs:
@@ -47,6 +49,15 @@ class Button():
                         Span(text_value, style=f"color:{text_color}")
                     if icon_value is not None:
                         VIcon(icon_value, size=floor(0.6 * size), color=icon_color)
+                    if loading is not None:
+                        # the button stays clickable while loading
+                        VProgressCircular(
+                            v_if=loading,
+                            size=floor(0.6 * size),
+                            indeterminate=True,
+                            color=loading_color,
+                            width=3
+                        )
 
 def is_valid_url(url):
     """
