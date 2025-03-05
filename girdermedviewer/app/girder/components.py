@@ -85,9 +85,6 @@ class GirderFileSelector(gwc.GirderFileManager):
             self.state.temp_dir,
             cache_mode
         )
-        # FIXME do not use global variable
-        global file_selector
-        file_selector = self
 
         self.state.change("location", "selected")(self.on_location_changed)
         self.state.change("api_url")(self.set_api_url)
@@ -222,7 +219,6 @@ class GirderItemList(VCard):
                         item="item",
                         value_name="object",
                         update_name="update_object",
-                        disabled=("item.loading",),
                     )
 
     @change("selected")
@@ -242,7 +238,7 @@ class GirderItemCard(VExpansionPanel):
 
     def _build_ui(self):
         with self:
-            with VExpansionPanelHeader():
+            with VExpansionPanelHeader(hide_actions=(f"{self.item}.loading",)):
                 with VRow(align="center", justify="space-between", dense=True):
                     VCol("{{ " + self.item + ".name }}")
                     with VCol(v_if=(f"{self.item}.loading",), classes="d-flex justify-end",):
