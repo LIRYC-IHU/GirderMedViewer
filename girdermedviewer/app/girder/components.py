@@ -85,6 +85,7 @@ class GirderFileSelector(gwc.GirderFileManager):
             self.state.temp_dir,
             cache_mode
         )
+        self.tasks = {}
 
         self.state.change("location", "selected")(self.on_location_changed)
         self.state.change("api_url")(self.set_api_url)
@@ -117,8 +118,11 @@ class GirderFileSelector(gwc.GirderFileManager):
         self.ctrl.remove_data(item["_id"]) #TODO Handle this with SceneObject
 
     def unselect_items(self):
-        while len(self.state.selected) > 0:
-            self.unselect_item(self.state.selected[0])
+        while len(self.state.selected.values()) > 0:
+            self.unselect_item(list(self.state.selected.values())[0])
+        #TODO Handle this with SceneObject
+        # self.state.selected.clear()
+        # self.state.dirty("selected")
 
     def select_item(self, item):
         assert item.get('_modelType') == 'item', "Only item can be selected"
@@ -141,15 +145,26 @@ class GirderFileSelector(gwc.GirderFileManager):
         async def load():
             await asyncio.sleep(1)
             try:
-                self.load_item(item)
+                await self.load_item(item)
             finally:
                 item["loading"] = False
                 self.state.dirty("selected")
                 self.state.flush()
+                self.tasks.pop(item["_id"], None)
 
-        create_task(load())
+        self.tasks[item["_id"]] = create_task(load())
 
-    def load_item(self, item):
+    @trigger("cancel_load_task")
+    def cancel_load_task(self, item):
+        logger.debug(f"Cancelling load task for {item}")
+        task = self.tasks.get(item["_id"])
+        if task and not task.done():
+            task.cancel()
+            self.tasks.pop(item["_id"], None)
+            self.unselect_item(item)
+            logger.info(f"Cancelled task for {item}")
+
+    async def load_item(self, item):
         logger.debug(f"Loading item {item}")
         try:
             files = list(self.file_fetcher.get_item_files(item))
@@ -161,7 +176,7 @@ class GirderFileSelector(gwc.GirderFileManager):
                     "You are trying to load more than one file. \
                     If so, please load a compressed archive."
                 )
-            with self.file_fetcher.fetch_file(files[0]) as file_path:
+            async with self.file_fetcher.fetch_file(files[0]) as file_path:
                 self.ctrl.load_file(file_path, item["_id"])
         except Exception:
             logger.error(f"Error loading file {item['_id']}: {traceback.format_exc()}")
@@ -199,7 +214,8 @@ class GirderItemList(VCard):
         )
         client.Style(
             ".v-expansion-panel-content__wrap { padding: 0 !important }"
-            ".v-expansion-panel--active>.v-expansion-panel-header, .v-expansion-panel-header { height: 64px !important }"
+            ".v-expansion-panel--active>.v-expansion-panel-header,"
+            ".v-expansion-panel-header { height: 64px !important }"
             ".v-messages { display: none }"
             ".v-list--dense .v-list-item, .v-list-item--dense { min-height: 30px !important; padding: 4px 0px }")
         self._build_ui()
@@ -243,8 +259,11 @@ class GirderItemCard(VExpansionPanel):
                     VCol("{{ " + self.item + ".name }}")
                     with VCol(v_if=(f"{self.item}.loading",), classes="d-flex justify-end",):
                         Button(
+                            tooltip="Cancel download",
                             text=True,
                             loading=True,
+                            click_native_stop=f"trigger('cancel_load_task', [{self.item}])",
+                            __events=[("click_native_stop", "click.native.stop")]
                         )
 
             with VExpansionPanelContent(v_if=(f"!{self.item}.loading",)):
