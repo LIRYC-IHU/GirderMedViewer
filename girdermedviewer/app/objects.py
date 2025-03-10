@@ -219,6 +219,8 @@ class Volume(SceneObject):
         self._on_preset_change(_, **kwargs)
 
     def _on_opacity_change(self, *_, **kwargs):
+        if self.opacity == -1:
+            return
         for view in self.twod_views:
             view.set_volume_opacity(self.id, self.opacity)
 
