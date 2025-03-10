@@ -5,7 +5,8 @@ from .vtk.utils import (
     get_random_color,
     load_mesh,
     load_volume,
-    supported_volume_extensions
+    supported_volume_extensions,
+    supported_mesh_extensions
 )
 
 
@@ -130,7 +131,7 @@ class SceneObject:
     def set_file_path(self, file_path):
         """Determines type based on file extension and upgrades the object."""
         # Upgrade object dynamically
-        if file_path.endswith(".stl"):
+        if file_path.endswith(supported_mesh_extensions()):
             return Mesh(self)
         elif file_path.endswith(supported_volume_extensions()):
             return Volume(self)

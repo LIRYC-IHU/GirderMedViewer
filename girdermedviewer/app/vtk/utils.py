@@ -40,6 +40,8 @@ from vtk import (
     vtkTransformFilter,
     vtkVolume,
     vtkVolumeProperty,
+    vtkXMLImageDataReader,
+    vtkXMLPolyDataReader
 )
 
 logger = logging.getLogger(__name__)
@@ -527,7 +529,11 @@ def create_rendering_pipeline():
 
 
 def supported_volume_extensions():
-    return (".nii", ".nii.gz", ".nrrd", ".mha", ".zip")
+    return (".nii", ".nii.gz", ".nrrd", ".mha", ".zip", ".vti")
+
+
+def supported_mesh_extensions():
+    return (".stl", ".vtp")
 
 
 def find_subfolder_with_most_files(directory):
@@ -598,17 +604,19 @@ def load_volume(file_path):
                 image_data, _ = exporter.readDICOMVolume(folder)
                 return image_data
 
+    if file_path.endswith(".vti"):
+        reader = vtkXMLImageDataReader()
+        reader.SetFileName(file_path)
+        reader.Update()
+        return reader.GetOutput()
+
     raise Exception("File format is not handled for {}".format(file_path))
 
 
 def load_mesh(file_path):
     """Read a file and return a vtkPolyData object"""
     logger.info(f"Loading mesh {file_path}")
-    if file_path.endswith(".stl"):
-        reader = vtkSTLReader()
-        reader.SetFileName(file_path)
-        reader.Update()
-
+    def invert_xy(reader):
         matrix = vtkMatrix4x4()
         matrix.SetElement(0, 0, -1)
         matrix.SetElement(1, 1, -1)
@@ -623,6 +631,18 @@ def load_mesh(file_path):
         transform_filter.Update()
 
         return transform_filter.GetOutput()
+
+    if file_path.endswith(".stl"):
+        reader = vtkSTLReader()
+        reader.SetFileName(file_path)
+        reader.Update()
+        return invert_xy(reader)
+
+    if file_path.endswith(".vtp"):
+        reader = vtkXMLPolyDataReader()
+        reader.SetFileName(file_path)
+        reader.Update()
+        return invert_xy(reader)
 
     raise Exception("File format is not handled for {}".format(file_path))
 
