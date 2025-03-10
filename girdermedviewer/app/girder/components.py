@@ -115,14 +115,10 @@ class GirderFileSelector(gwc.GirderFileManager):
     def unselect_item(self, item):
         self.state.selected.pop(item["_id"])
         self.state.dirty("selected")
-        self.ctrl.remove_data(item["_id"]) #TODO Handle this with SceneObject
 
     def unselect_items(self):
         while len(self.state.selected.values()) > 0:
             self.unselect_item(list(self.state.selected.values())[0])
-        #TODO Handle this with SceneObject
-        # self.state.selected.clear()
-        # self.state.dirty("selected")
 
     def select_item(self, item):
         assert item.get('_modelType') == 'item', "Only item can be selected"

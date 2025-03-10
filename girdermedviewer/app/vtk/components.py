@@ -1,4 +1,6 @@
 import logging
+import weakref
+
 from collections import defaultdict
 from dataclasses import dataclass
 from enum import Enum
@@ -216,7 +218,7 @@ class VtkView(vtk.VtkRemoteView):
         self.render_window = render_window
         self.interactor = interactor
         self.data = defaultdict(list)
-        self.ctrl.view_update.add(self.update)
+        self.ctrl.view_update.add(weakref.WeakMethod(self.update))
 
     def get_data_id(self, data):
         return next((key for key, value in self.data.items() if data in value), None)
