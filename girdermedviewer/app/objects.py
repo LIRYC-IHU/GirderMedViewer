@@ -1,4 +1,5 @@
 from trame.decorators import TrameApp, controller, change
+import weakref
 
 from .vtk.components import SliceView, ThreeDView
 from .vtk.utils import (
@@ -14,7 +15,6 @@ from .vtk.utils import (
 class Scene:
     def __init__(self, server):
         self.server = server
-        self.state.elements = []
         self.ctrl.load_file = self.load_file
         self.objects = []
         self.views = []
@@ -32,11 +32,17 @@ class Scene:
 
     @change("selected")
     def on_selected_changed(self, selected, **kwargs):
-        for item in selected:
-            object = self.get_object(item["_id"])
+        # Add missing objects
+        for item_id in selected.keys():
+            object = self.get_object(item_id)
             if object is None:
-                object = SceneObject(self.server, item["_id"], None, self.views)
+                object = SceneObject(self.server, item_id, None, self.views)
                 self.objects.append(object)
+        # Remove objects that disappeared
+        for obj in self.objects[:]:
+            if obj.id not in selected.keys():
+                self.objects.remove(obj)
+                del obj
 
     @controller.set("load_file")
     def load_file(self, file_path, data_id=None):
@@ -71,7 +77,6 @@ class Scene:
 
 @TrameApp()
 class SceneObject:
-
     def __init__(self, server, id, data_type, views):
         self.server = server
         self.id = id
@@ -79,31 +84,39 @@ class SceneObject:
         self.views = []
         self.set_views(views)
 
+        self._reset_state(id, data_type)
+
+    def __del__(self):
+        # do not reset when specializing the class
+        if self.data is None:
+            return
+
+        self.reset()
+
+    def _reset_state(self, id, data_type):
         self.state[id] = {
             "id": id,
             "type": data_type,
             "opacity": 1.0,
-            "loading": False,
             "loaded": False,
         }
-        self.state.dirty(id)
-
-    def __del__(self):
-        # do not reset when specializing the class
-        if self.data is not None:
-            self.reset()
 
     def reset(self):
         """Must be reimplemted to clear data"""
         # remove self from all views
         self.set_views([])
         self.data = None
-        self.id = None
         self.file_path = None
+
+        self._reset_state(self.id, self.state[self.id].get("type"))
 
     @property
     def state(self):
         return self.server.state
+
+    @property
+    def controller(self):
+        return self.server.controller
 
     @property
     def data_type(self):
@@ -154,23 +167,12 @@ class SceneObject:
         self.views = views
 
     @property
-    def loading(self):
-        return self.state[self.id]["loading"]
-
-    @loading.setter
-    def loading(self, value):
-        self.state[self.id]["loading"] = value
-        self.state.dirty(self.id)
-
-    @property
     def loaded(self):
         return self.state[self.id]["loaded"]
 
     @loaded.setter
     def loaded(self, value):
         self.state[self.id]["loaded"] = value
-        if value is True:
-            self.loading = False
         self.state.dirty(self.id)
 
     @property
@@ -188,11 +190,10 @@ class Volume(SceneObject):
 
     def __init__(self, scene_object):
         super().__init__(scene_object.server, scene_object.id, 'volume', scene_object.views)
-        self.state.change(self.id)(self._on_change)
+        self.state.change(self.id)(weakref.WeakMethod(self._on_change))
+        self.controller.window_level_changed_in_view.add(weakref.WeakMethod(self.window_level_changed_in_view))
 
     def load(self, file_path):
-        self.loading = True
-
         self.data = load_volume(file_path)
 
         scalar_range = self.data.GetScalarRange()
@@ -204,7 +205,6 @@ class Volume(SceneObject):
         self.preset_range = scalar_range
 
         self._on_change()
-
         super().load(file_path)
 
     def _add_to_view(self, view):
@@ -220,6 +220,8 @@ class Volume(SceneObject):
         self._on_preset_change(_, **kwargs)
 
     def _on_opacity_change(self, *_, **kwargs):
+        if self.opacity == -1:
+            return
         for view in self.twod_views:
             view.set_volume_opacity(self.id, self.opacity)
 
@@ -255,7 +257,6 @@ class Volume(SceneObject):
                 self.window_level_min_max
             )
 
-    @controller.add("window_level_changed_in_view")
     def window_level_changed_in_view(self, window_level):
         if not self.is_primary:
             return
@@ -302,10 +303,9 @@ class Mesh(SceneObject):
     def __init__(self, scene_object):
         super().__init__(scene_object.server, scene_object.id, 'mesh', scene_object.views)
         # FIXME move to superclass
-        self.state.change(self.id)(self._on_change)
+        self.state.change(self.id)(weakref.WeakMethod(self._on_change))
 
     def load(self, file_path):
-        self.loading = True
         self.data = load_mesh(file_path)
         self.color = get_random_color()
         self._on_change()
